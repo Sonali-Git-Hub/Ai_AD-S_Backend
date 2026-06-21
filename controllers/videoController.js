@@ -7,7 +7,7 @@ import { GoogleGenAI } from '@google/genai';
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
 import GeneratedVideo from '../models/GeneratedVideo.js';
-import { subscriptionService } from '../services/subscriptionService.js';
+import { incrementQuota } from '../services/subscriptionService.js';
 import { selectVideoModel } from '../services/modelSelector.js';
 import { executeVideoPipeline } from '../services/generationPipeline.js';
 
@@ -78,9 +78,12 @@ export const generateVideo = async (req, res) => {
     const videoUrl = pipelineResult.url;
     if (!videoUrl) throw new Error('Generation failed to return a URL');
 
-    // 💰 Deduct credits
-    if (req.creditMeta && req.creditMeta.cost > 0) {
-      await subscriptionService.deductCreditsFromMeta(req.creditMeta);
+    // ✅ Increment quota on successful video generation
+    const vidUserId = req.user?.id || req.user?._id;
+    if (vidUserId) {
+      incrementQuota(vidUserId, 'generate_video').catch(e =>
+        logger.warn(`[QuotaSystem] incrementQuota failed for ${vidUserId}: ${e.message}`)
+      );
     }
 
     // Save to database

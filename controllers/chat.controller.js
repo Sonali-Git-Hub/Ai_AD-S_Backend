@@ -1,5 +1,5 @@
 import * as aiService from '../services/ai.service.js';
-import { subscriptionService } from '../services/subscriptionService.js';
+import { incrementQuota } from '../services/subscriptionService.js';
 import logger from '../utils/logger.js';
 import Conversation from '../models/Conversation.model.js';
 import User from '../models/User.js';
@@ -77,9 +77,12 @@ export const chat = async (req, res, next) => {
         conversation.lastMessageAt = Date.now();
         await conversation.save();
 
-        // 💰 Deduct credits on successful output
-        if (req.creditMeta && req.creditMeta.cost > 0) {
-            await subscriptionService.deductCreditsFromMeta(req.creditMeta);
+        // ✅ Increment chat quota counter (enforces Free plan 100-message limit)
+        const chatUserId = req.user?.id || req.user?._id;
+        if (chatUserId) {
+            incrementQuota(chatUserId, 'chat').catch(e =>
+                logger.warn(`[QuotaSystem] chat increment failed for ${chatUserId}: ${e.message}`)
+            );
         }
 
         res.status(200).json({

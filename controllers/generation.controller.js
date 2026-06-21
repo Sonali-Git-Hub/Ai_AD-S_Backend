@@ -9,7 +9,7 @@ import * as socialAgentService from '../services/socialAgent.service.js';
 import UploadAsset from '../models/UploadAsset.js';
 import CalendarEntry from '../models/CalendarEntry.js';
 import ContentCalendar from '../models/ContentCalendar.js';
-import { subscriptionService } from '../services/subscriptionService.js';
+import { incrementQuota } from '../services/subscriptionService.js';
 import { isFreeTierUser } from '../middleware/creditSystem.js';
 
 
@@ -528,8 +528,18 @@ export const generateVisualPost = async (req, res) => {
     console.log(`  ⚡ Dispatching pipeline in background...`);
 
     // Fire and forget — background visual generation
-    // Credit deduction happens INSIDE the service only on successful completion
-    generationService.generateVisualPostForEntry(workspaceId, calendarEntryId, job._id, modelId, postFormat, aspectRatio, carouselCount, req.creditMeta)
+    // Quota increment happens after successful completion inside the pipeline
+    const userId = req.user?.id || req.user?._id;
+    generationService.generateVisualPostForEntry(workspaceId, calendarEntryId, job._id, modelId, postFormat, aspectRatio, carouselCount, null)
+      .then(() => {
+        // Increment quota on success — carousel or image
+        if (userId) {
+          const quotaAction = postFormat === 'carousel' ? 'generate_carousel' : 'generate_image';
+          incrementQuota(userId, quotaAction).catch(e =>
+            logger.warn(`[QuotaSystem] incrementQuota failed for ${userId}: ${e.message}`)
+          );
+        }
+      })
       .catch(err => {
         console.error(`\n❌ [VisualPost] Background job ${job._id} FAILED: ${err.message}`);
         logger.error(`[VisualPost] Background job ${job._id} failed: ${err.message}`);

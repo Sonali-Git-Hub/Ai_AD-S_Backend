@@ -25,7 +25,7 @@ const upgradeAdmin = async () => {
         }
 
         // 2. Get the Business Plan
-        const businessPlan = await Plan.findOne({ planId: 'business' });
+        const businessPlan = await Plan.findOne({ planId: { $in: ['Plan_3', 'business'] } });
         if (!businessPlan) {
             console.error("Business plan not found in database! Make sure you seeded plans.");
             process.exit(1);

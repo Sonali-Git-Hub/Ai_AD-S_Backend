@@ -1,250 +1,355 @@
 import User from '../models/User.js';
 import Subscription from '../models/Subscription.js';
-import CreditLog from '../models/CreditLog.js';
-import FeatureCredit from '../models/FeatureCredit.js';
+import UserQuota from '../models/UserQuota.js';
+import Plan from '../models/Plan.js';
 
-let featureCostCache = {};
+// ── PLAN QUOTA DEFAULTS (fallback if not found in DB) ─────────────────────────
+// These match the seeded plan documents exactly.
+const PLAN_QUOTA_DEFAULTS = {
+    'Plan_0': { chatLimit: 100, chatScope: 'total',     imageLimit: 0,  carouselLimit: 0, videoLimit: 0, editImageAllowed: false, cashflowAllowed: false, validityDays: 90  },
+    'Plan_1': { chatLimit: -1,  chatScope: 'unlimited', imageLimit: 0,  carouselLimit: 0, videoLimit: 0, editImageAllowed: true,  cashflowAllowed: true,  validityDays: 30  },
+    'Plan_2': { chatLimit: -1,  chatScope: 'unlimited', imageLimit: 5,  carouselLimit: 1, videoLimit: 0, editImageAllowed: true,  cashflowAllowed: true,  validityDays: 30  },
+    'Plan_3': { chatLimit: -1,  chatScope: 'unlimited', imageLimit: 10, carouselLimit: 5, videoLimit: 5, editImageAllowed: true,  cashflowAllowed: true,  validityDays: 30  },
+};
 
-export const refreshFeatureCostCache = async () => {
+/**
+ * Fetch default plan configurations dynamically from the database.
+ * Falls back to hardcoded defaults only if DB check fails.
+ */
+const getPlanDefaultsFromDb = async (planKey) => {
     try {
-        const features = await FeatureCredit.find({});
-        const newCache = {};
-        features.forEach(f => {
-            newCache[f.featureKey] = f.cost;
-        });
-
-        // Retain Video Multipliers manually since they are matrix-based
-        newCache['video_multipliers'] = {
-            "veo-3.1-fast-generate-001": { "4k": newCache['video_veo_fast_4k'] || 585, "default": newCache['video_veo_fast_def'] || 250 },
-            "veo-3.1-generate-001": { "4k": newCache['video_veo_pro_4k'] || 666, "default": newCache['video_veo_pro_def'] || 333 }
-        };
-
-        if (Object.keys(newCache).length > 2) {
-            featureCostCache = newCache;
+        const plan = await Plan.findOne({ planId: planKey, isActive: true }).lean();
+        if (plan) {
+            return {
+                chatLimit: plan.chatLimit,
+                chatScope: plan.chatScope,
+                imageLimit: plan.imageLimit,
+                carouselLimit: plan.carouselLimit,
+                videoLimit: plan.videoLimit,
+                editImageAllowed: plan.editImageAllowed,
+                cashflowAllowed: plan.cashflowAllowed,
+                validityDays: plan.validityDays,
+            };
         }
-    } catch (e) {
-        console.error("Failed to load Feature Credits into cache");
+    } catch (err) {
+        console.error(`[subscriptionService] Failed to load plan ${planKey} defaults from DB:`, err.message);
+    }
+    return PLAN_QUOTA_DEFAULTS[planKey] || PLAN_QUOTA_DEFAULTS['Plan_0'];
+};
+
+/**
+ * Resolve today's date string (YYYY-MM-DD) in IST (UTC+5:30)
+ */
+const getTodayIST = () => {
+    const now = new Date();
+    const ist = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
+    return ist.toISOString().split('T')[0];
+};
+
+/**
+ * Get the active plan quota for a user.
+ * Returns plan quotas merged from DB or fallback defaults.
+ */
+export const getUserPlan = async (userId) => {
+    const user = await User.findById(userId).lean();
+    if (!user) {
+        const freeDefaults = await getPlanDefaultsFromDb('Plan_0');
+        return { planKey: 'Plan_0', ...freeDefaults };
+    }
+
+    // Admins bypass all quota enforcement
+    if (user.role === 'admin' || (user.email && user.email.toLowerCase() === 'admin@uwo24.com')) {
+        return { planKey: 'admin', chatLimit: -1, chatScope: 'unlimited', imageLimit: 999, carouselLimit: 999, videoLimit: 999, editImageAllowed: true, cashflowAllowed: true, validityDays: 99999 };
+    }
+
+    // Founder status → treat as Business plan
+    if (user.founderStatus) {
+        const businessDefaults = await getPlanDefaultsFromDb('Plan_3');
+        return { planKey: 'founder', ...businessDefaults, imageLimit: 999, carouselLimit: 999, videoLimit: 999 };
+    }
+
+    // Fetch active subscription
+    const sub = await Subscription.findOne({ userId, subscriptionStatus: 'active' }).populate('planId').lean();
+
+    if (!sub || !sub.planId) {
+        const freeDefaults = await getPlanDefaultsFromDb('Plan_0');
+        return { planKey: 'Plan_0', ...freeDefaults };
+    }
+
+    const plan = sub.planId;
+
+    // Check if plan has expired
+    if (sub.renewalDate && new Date(sub.renewalDate) < new Date()) {
+        const freeDefaults = await getPlanDefaultsFromDb('Plan_0');
+        return { planKey: 'Plan_0', ...freeDefaults };
+    }
+
+    // Match plan by planId string (case-insensitive) or by price
+    const planIdStr = (plan.planId || plan.planName || '').toLowerCase();
+    let planKey = 'Plan_0';
+    if (planIdStr.includes('plan_3') || planIdStr.includes('business') || plan.priceMonthly >= 2499) planKey = 'Plan_3';
+    else if (planIdStr.includes('plan_2') || planIdStr.includes('pro') || plan.priceMonthly >= 999) planKey = 'Plan_2';
+    else if (planIdStr.includes('plan_1') || planIdStr.includes('starter') || plan.priceMonthly >= 499) planKey = 'Plan_1';
+    else if (planIdStr.includes('founder')) planKey = 'Plan_3'; // Founder = Business level
+
+    // Prefer DB quota fields, fallback to DB plan defaults
+    const defaults = await getPlanDefaultsFromDb(planKey);
+    return {
+        planKey,
+        subscriptionId: sub._id,
+        renewalDate: sub.renewalDate,
+        chatLimit:        plan.chatLimit        ?? defaults.chatLimit,
+        chatScope:        plan.chatScope        ?? defaults.chatScope,
+        imageLimit:       plan.imageLimit       ?? defaults.imageLimit,
+        carouselLimit:    plan.carouselLimit    ?? defaults.carouselLimit,
+        videoLimit:       plan.videoLimit       ?? defaults.videoLimit,
+        editImageAllowed: plan.editImageAllowed ?? defaults.editImageAllowed,
+        cashflowAllowed:  plan.cashflowAllowed  ?? defaults.cashflowAllowed,
+        validityDays:     plan.validityDays     ?? defaults.validityDays,
+    };
+};
+
+/**
+ * Get or create the UserQuota document for a user.
+ * Automatically resets daily counters if the stored date != today.
+ */
+export const getOrCreateUserQuota = async (userId) => {
+    const today = getTodayIST();
+
+    let quota = await UserQuota.findOne({ userId });
+
+    if (!quota) {
+        // First time — create with today's date and plan activation
+        quota = await UserQuota.create({
+            userId,
+            date: today,
+            imagesUsed: 0,
+            carouselsUsed: 0,
+            videosUsed: 0,
+            chatUsed: 0,
+            planActivatedAt: new Date(),
+        });
+    } else if (quota.date !== today) {
+        // New day — reset daily counters atomically
+        quota = await UserQuota.findOneAndUpdate(
+            { userId },
+            { $set: { date: today, imagesUsed: 0, carouselsUsed: 0, videosUsed: 0 } },
+            { new: true }
+        );
+    }
+
+    return quota;
+};
+
+/**
+ * Check if a user can perform an action under their current plan quota.
+ *
+ * @param {string} userId
+ * @param {string} action  - 'chat' | 'generate_image' | 'edit_image' | 'generate_carousel' | 'generate_video' | 'cashflow'
+ * @returns {{ allowed: boolean, reason?: string, code?: string, planKey?: string }}
+ */
+export const checkQuota = async (userId, action) => {
+    const plan = await getUserPlan(userId);
+
+    // Admins always allowed
+    if (plan.planKey === 'admin') return { allowed: true, planKey: 'admin' };
+
+    // ── CHECK PLAN EXPIRY (Free plan: 90 days) ──────────────────────────────
+    const quota = await getOrCreateUserQuota(userId);
+
+    if (plan.planKey === 'Plan_0') {
+        const activatedAt = quota.planActivatedAt || new Date();
+        const expiryMs = activatedAt.getTime() + (plan.validityDays * 24 * 60 * 60 * 1000);
+        if (Date.now() > expiryMs) {
+            return {
+                allowed: false,
+                code: 'PLAN_EXPIRED',
+                reason: 'Your free plan has expired. Please upgrade to continue using AISA.',
+                planKey: plan.planKey
+            };
+        }
+    }
+
+    // ── ACTION-SPECIFIC CHECKS ────────────────────────────────────────────────
+    switch (action) {
+
+        case 'chat': {
+            if (plan.chatScope === 'unlimited') return { allowed: true, planKey: plan.planKey };
+            // Free plan: check total lifetime chat count
+            if (plan.chatLimit !== -1 && quota.chatUsed >= plan.chatLimit) {
+                return {
+                    allowed: false,
+                    code: 'QUOTA_EXCEEDED',
+                    reason: `You've used all ${plan.chatLimit} messages on the Free plan. Upgrade to get unlimited conversations.`,
+                    planKey: plan.planKey,
+                    used: quota.chatUsed,
+                    limit: plan.chatLimit
+                };
+            }
+            return { allowed: true, planKey: plan.planKey };
+        }
+
+        case 'generate_image': {
+            if (plan.imageLimit === 0) {
+                return {
+                    allowed: false,
+                    code: 'PLAN_RESTRICTED',
+                    reason: 'Image generation is not available on your current plan. Upgrade to Pro (₹999/mo) for 5 images per day.',
+                    planKey: plan.planKey
+                };
+            }
+            if (quota.imagesUsed >= plan.imageLimit) {
+                return {
+                    allowed: false,
+                    code: 'QUOTA_EXCEEDED',
+                    reason: `You've used your ${plan.imageLimit} image${plan.imageLimit > 1 ? 's' : ''} for today. Your limit resets tomorrow.`,
+                    planKey: plan.planKey,
+                    used: quota.imagesUsed,
+                    limit: plan.imageLimit
+                };
+            }
+            return { allowed: true, planKey: plan.planKey };
+        }
+
+        case 'edit_image': {
+            if (!plan.editImageAllowed) {
+                return {
+                    allowed: false,
+                    code: 'PLAN_RESTRICTED',
+                    reason: 'Image editing is not available on the Free plan. Upgrade to Starter (₹499/mo) or higher to edit images.',
+                    planKey: plan.planKey
+                };
+            }
+            return { allowed: true, planKey: plan.planKey };
+        }
+
+        case 'generate_carousel': {
+            if (plan.carouselLimit === 0) {
+                return {
+                    allowed: false,
+                    code: 'PLAN_RESTRICTED',
+                    reason: 'Carousel generation is not available on your current plan. Upgrade to Pro (₹999/mo) for 1 carousel per day.',
+                    planKey: plan.planKey
+                };
+            }
+            if (quota.carouselsUsed >= plan.carouselLimit) {
+                return {
+                    allowed: false,
+                    code: 'QUOTA_EXCEEDED',
+                    reason: `You've used your ${plan.carouselLimit} carousel${plan.carouselLimit > 1 ? 's' : ''} for today. Your limit resets tomorrow.`,
+                    planKey: plan.planKey,
+                    used: quota.carouselsUsed,
+                    limit: plan.carouselLimit
+                };
+            }
+            return { allowed: true, planKey: plan.planKey };
+        }
+
+        case 'generate_video': {
+            if (plan.videoLimit === 0) {
+                return {
+                    allowed: false,
+                    code: 'PLAN_RESTRICTED',
+                    reason: 'Video generation is not available on your current plan. Upgrade to Business (₹2499/mo) for 5 videos per day.',
+                    planKey: plan.planKey
+                };
+            }
+            if (quota.videosUsed >= plan.videoLimit) {
+                return {
+                    allowed: false,
+                    code: 'QUOTA_EXCEEDED',
+                    reason: `You've used your ${plan.videoLimit} video${plan.videoLimit > 1 ? 's' : ''} for today. Your limit resets tomorrow.`,
+                    planKey: plan.planKey,
+                    used: quota.videosUsed,
+                    limit: plan.videoLimit
+                };
+            }
+            return { allowed: true, planKey: plan.planKey };
+        }
+
+        case 'cashflow': {
+            if (!plan.cashflowAllowed) {
+                return {
+                    allowed: false,
+                    code: 'PLAN_RESTRICTED',
+                    reason: 'CashFlow Explorer is not available on the Free plan. Upgrade to Starter (₹499/mo) or higher to access stock insights.',
+                    planKey: plan.planKey
+                };
+            }
+            return { allowed: true, planKey: plan.planKey };
+        }
+
+        default:
+            // All other actions (web search, code writer, legal, etc.) are allowed on all plans
+            return { allowed: true, planKey: plan.planKey };
     }
 };
 
-// Start cache asynchronously
-refreshFeatureCostCache();
+/**
+ * Atomically increment a quota counter after a successful generation.
+ *
+ * @param {string} userId
+ * @param {string} action  - 'chat' | 'generate_image' | 'generate_carousel' | 'generate_video'
+ * @param {number} count   - how many to increment (default 1)
+ */
+export const incrementQuota = async (userId, action, count = 1) => {
+    const today = getTodayIST();
 
-export const getToolCost = (toolName, body = {}) => {
-    // Merge hardcoded defaults with DB costs to ensure new features work
-    const defaults = {
-        chat: 2, 
-        web_search: 60, 
-        deep_search: 85, 
-        agent_chat: 60, 
-        realtime_chat: 60,
-        knowledge_base: 3, 
-        generate_image: 74, // Imagen 3 (₹3.70) -> 50% profit @ 74 credits (₹7.4)
-        generate_image_hd: 110, 
-        generate_image_ultra: 145,
-        ai_ads_agent: 241, // Imagen 3 + GPT-4 Prompting (₹12.04) -> 50% profit @ 241 credits (₹24.1)
-        edit_image: 74,
-        gemini_flash: 19, // Brand DNA Scraping (₹0.93) -> 19 credits
-        activate_strategy: 60, // 30-Day Strategy (₹3.00) -> 60 credits
-        brand_setup: 0, // Saving brand profile manually (no AI cost)
-        generate_content: 5, // One-Click Content (₹0.25) -> 5 credits
-        regenerate_content: 2, // Regeneration (₹0.10) -> 2 credits
-        video_multipliers: { "veo-3.1-fast-generate-001": { "4k": 585, "default": 250 }, "veo-3.1-generate-001": { "4k": 666, "default": 333 } },
-        code_writer: 3, 
-        convert_audio: 90, 
-        document_convert: 3, 
-        legal_toolkit: 0, 
-        ai_cashflow: 5
+    const fieldMap = {
+        'chat':               'chatUsed',
+        'generate_image':     'imagesUsed',
+        'generate_carousel':  'carouselsUsed',
+        'generate_video':     'videosUsed',
     };
 
-    const featureCosts = { ...defaults, ...featureCostCache };
+    const field = fieldMap[action];
+    if (!field) return; // unknown action, skip
 
-    if (toolName === 'chat') {
-        return featureCosts.chat;
-    }
-
-    const normalizedTool = typeof toolName === 'string' ? toolName.toLowerCase() : toolName;
-    if (normalizedTool === 'deep_search' || normalizedTool === 'web_search' || normalizedTool === 'code_writer') {
-        return featureCosts[normalizedTool] || defaults[normalizedTool] || 0;
-    }
-    if (normalizedTool === 'convert_document' || normalizedTool === 'document_convert') {
-        return featureCosts.document_convert || defaults.document_convert || 0;
-    }
-
-    if (toolName === 'generate_video') {
-        const duration = body?.duration || 5;
-        const modelId = body?.modelId || 'veo-3.1-fast-generate-001';
-        const resolution = body?.resolution || '1080p';
-        const videoMults = featureCosts.video_multipliers || defaults.video_multipliers;
-        const modelMult = videoMults[modelId] || videoMults['veo-3.1-fast-generate-001'] || { "4k": 585, "default": 250 };
-        const multiplier = resolution === '4k' ? (modelMult['4k'] || 585) : (modelMult['default'] || 250);
-        return multiplier * duration;
-    }
-
-    if (normalizedTool === 'ai_ads_agent') {
-        const baseCost = featureCosts.ai_ads_agent !== undefined ? featureCosts.ai_ads_agent : (defaults.ai_ads_agent || 241);
-        if (body?.postFormat === 'carousel') {
-            // Charge exactly for the number of slides selected (2, 3, or 4)
-            const slideCount = Math.min(Math.max(parseInt(body?.carouselCount) || 3, 2), 4);
-            return baseCost * slideCount;
-        }
-        return baseCost;
-    }
-
-    return featureCosts[toolName] !== undefined ? featureCosts[toolName] : (defaults[toolName] || 0);
-};
-
-const getToolLabel = (toolName) => {
-    switch ((toolName || '').toLowerCase()) {
-        case 'chat': return 'AISA Chat (Text)';
-        case 'agent_chat': return 'AISA Agent Chat';
-        case 'realtime_chat': return 'AISA Realtime Chat';
-        case 'knowledge_base': return 'AISA Knowledge Base';
-        case 'web_search': return 'AISA Web Search';
-        case 'deep_search': return 'AISA Deep Search';
-        case 'generate_image_hd': return 'AISA Image HD';
-        case 'generate_image_ultra': return 'AISA Image Ultra';
-        case 'generate_image': return 'AISA Image';
-        case 'edit_image': return 'AISA Edit Image';
-        case 'generate_video': return 'AISA Video Generation';
-        case 'code_writer': return 'AISA Code Writer';
-        case 'convert_document': return 'AISA Document Analysis';
-        case 'legal_toolkit': return 'AISA AI Legal';
-        case 'ai_cashflow': return 'AISA CashFlow Explorer';
-        case 'ai_ads_agent': return 'AI Ads Agent (Visual Post)';
-        case 'gemini_flash': return 'AI Ads Agent (Website Scrapping)';
-        case 'activate_strategy': return 'AI Ads Agent (30-Day Strategy)';
-        case 'generate_content': return 'AI Ads Agent (Content Generation)';
-        case 'regenerate_content': return 'AI Ads Agent (Content Refresh)';
-        default: return 'AISA Service';
+    try {
+        await UserQuota.findOneAndUpdate(
+            { userId },
+            {
+                $inc: { [field]: count },
+                $setOnInsert: { date: today, planActivatedAt: new Date() }
+            },
+            { upsert: true, new: true }
+        );
+    } catch (err) {
+        console.error(`[QuotaSystem] Failed to increment ${field} for user ${userId}:`, err.message);
+        // Non-fatal: don't throw, just log
     }
 };
 
-const premiumTools = [
-    'generate_video'
-];
+// ── LEGACY HELPERS (kept for backward compat with existing non-credit parts) ──
 
+/** Returns true if user has no active paid subscription */
+export const isFreeTierUser = async (userId) => {
+    const plan = await getUserPlan(userId);
+    return plan.planKey === 'Plan_0';
+};
+
+/** Returns true if user has any paid subscription or founder status */
 export const checkPremiumAccess = async (userId) => {
-    const user = await User.findById(userId);
-    if (!user) return false;
-    if (user.founderStatus) return true;
-
-    const sub = await Subscription.findOne({
-        userId,
-        subscriptionStatus: 'active'
-    }).populate('planId');
-
-    if (sub && sub.planId && (sub.planId.priceMonthly > 0 || sub.planId.priceYearly > 0)) {
-        return true;
-    }
-    return false;
+    const plan = await getUserPlan(userId);
+    return plan.planKey !== 'Plan_0';
 };
 
+/**
+ * Legacy stub — credit deduction no longer happens.
+ * Controllers that still reference subscriptionService.deductCredits will silently succeed.
+ */
 export const subscriptionService = {
-    checkCredits: async (userId, toolsRequested = [], metadata = {}) => {
-        const user = await User.findById(userId);
-        if (!user) throw new Error("User not found");
-
-        const hasPremiumTool = toolsRequested.some(tool => premiumTools.includes(tool));
-        if (hasPremiumTool) {
-            const hasAccess = await checkPremiumAccess(userId);
-            if (!hasAccess) {
-                throw new Error("PREMIUM_RESTRICTED");
-            }
-        }
-
-        const totalCost = toolsRequested.reduce((acc, tool) => acc + getToolCost(tool, metadata), 0);
-        if ((user.credits || 0) < totalCost) {
-            throw new Error("Insufficient credits");
-        }
-        return true;
-    },
-
-    deductCredits: async (userId, toolsUsed = [], sessionId, metadata = {}) => {
-        const user = await User.findById(userId);
-        if (!user) throw new Error("User not found");
-
-        const totalCost = toolsUsed.reduce((acc, tool) => acc + getToolCost(tool, metadata), 0);
-
-        if ((user.credits || 0) < totalCost) {
-            throw new Error("Insufficient credits");
-        }
-
-        if (totalCost > 0) {
-            user.credits -= totalCost;
-            await user.save();
-        }
-
-        // 📝 Log to Database - Find the most descriptive tool for the label
-        try {
-            // Pick a magic tool over 'chat' if multiple exist
-            const nonChatTools = toolsUsed.filter(t => t !== 'chat');
-            const primaryTool = nonChatTools.length > 0 ? nonChatTools[0] : toolsUsed[0];
-            const otherToolsCount = toolsUsed.length > 1 ? toolsUsed.length - 1 : 0;
-
-            await CreditLog.create({
-                userId: user._id,
-                action: primaryTool,
-                description: getToolLabel(primaryTool) + (otherToolsCount > 0 ? ` (+${otherToolsCount} more)` : ''),
-                credits: -totalCost,
-                balanceAfter: user.credits
-            });
-        } catch (logErr) {
-            console.error('CreditLog save failed in subscriptionService:', logErr.message);
-        }
-
-        return true;
-    },
-
-    deductCreditsFromMeta: async (creditMeta) => {
-        if (!creditMeta || !creditMeta.userId || !creditMeta.cost || creditMeta.cost <= 0) {
-            return true;
-        }
-
-        const user = await User.findById(creditMeta.userId);
-        if (!user) throw new Error("User not found during credit deduction");
-
-        user.credits -= creditMeta.cost;
-        await user.save();
-
-        // 📝 Log to Database
-        try {
-            console.log(`[CreditSystem] Deducting ${creditMeta.cost} for ${creditMeta.action} from user ${user._id}`);
-            await CreditLog.create({
-                userId: user._id,
-                action: creditMeta.action || 'feature_usage',
-                description: creditMeta.description || 'AISA Magic Feature',
-                credits: -creditMeta.cost,
-                balanceAfter: user.credits
-            });
-            console.log(`[CreditSystem] Log created successfully. New balance: ${user.credits}`);
-        } catch (logErr) {
-            console.error('CreditLog save failed in deductCreditsFromMeta:', logErr.message);
-        }
-
-        // 📝 Record Stock Tab Unlock
-        if (creditMeta.tabName && creditMeta.symbol) {
-            try {
-                const UnlockedStockTab = (await import('../models/UnlockedStockTab.js')).default;
-                await UnlockedStockTab.findOneAndUpdate(
-                    {
-                        userId: creditMeta.userId,
-                        symbol: creditMeta.symbol.toUpperCase().trim(),
-                        tab: creditMeta.tabName
-                    },
-                    { createdAt: new Date() },
-                    { upsert: true, new: true }
-                );
-                console.log(`[CreditSystem] Marked tab '${creditMeta.tabName}' as unlocked for stock ${creditMeta.symbol} (User: ${creditMeta.userId})`);
-            } catch (err) {
-                console.error(`[CreditSystem] Failed to save unlocked stock tab:`, err.message);
-            }
-        }
-
-        return true;
-    },
-
+    checkCredits: async () => true,
+    deductCredits: async () => true,
+    deductCreditsFromMeta: async () => true,
     checkLimit: async () => ({ usage: 0, usageKey: 'mock' }),
-    incrementUsage: () => { }
+    incrementUsage: () => {},
+    // New quota methods exposed here for convenience
+    checkQuota,
+    incrementQuota,
+    getUserPlan,
 };
 
+// Stub for old code that imported getToolCost
+export const getToolCost = () => 0;
+export const refreshFeatureCostCache = async () => {};

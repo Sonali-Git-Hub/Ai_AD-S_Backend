@@ -3,7 +3,7 @@ import logger from '../utils/logger.js';
 import { GoogleGenAI, Modality } from '@google/genai';
 import { refineAdvancedEditPrompt, generateFollowUpPrompts } from '../utils/imagePromptController.js';
 import { getConfig } from '../services/configService.js';
-import { subscriptionService } from '../services/subscriptionService.js';
+import { incrementQuota } from '../services/subscriptionService.js';
 import { selectImageModel } from '../services/modelSelector.js';
 import { executeImagePipeline } from '../services/generationPipeline.js';
 import axios from 'axios';
@@ -262,9 +262,12 @@ export const generateImage = async (req, res, next) => {
         console.log(`  💡 Generating follow-up prompts...`);
         const followUpPrompts = await generateFollowUpPrompts(prompt, imageUrl).catch(() => []);
 
-        // 💰 Deduct credits on successful output
-        if (req.creditMeta && req.creditMeta.cost > 0) {
-            await subscriptionService.deductCreditsFromMeta(req.creditMeta);
+        // ✅ Increment quota on successful image generation
+        const userId = req.user?.id || req.user?._id;
+        if (userId) {
+            incrementQuota(userId, 'generate_image').catch(e =>
+                logger.warn(`[QuotaSystem] incrementQuota failed for ${userId}: ${e.message}`)
+            );
         }
 
         console.log(`  ✅ Response sent to client.\n`);
