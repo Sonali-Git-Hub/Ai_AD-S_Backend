@@ -286,8 +286,9 @@ export const Welcome_Email_Template = `
             </p>
 
             <hr class="section-divider" />
+             <h1 class="features-title">🚀 Ask. Learn. Grow. Chat with AISA™ and Unlock 10X Your Potential</h1>
 
-            <h3 class="features-title">🚀 Explore the AISA™ Ecosystem</h3>
+            <h3 class="features-title"> Explore the AISA™ Ecosystem</h3>
             
             <div class="feature-item">
                 <span class="feature-icon">⚖️</span>
