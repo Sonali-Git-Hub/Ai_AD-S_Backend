@@ -907,6 +907,49 @@ router.post("/apple/callback", async (req, res) => {
   }
 });
 
+// POST /apple — called by native iOS app using Apple ID token
+router.post("/apple", async (req, res) => {
+  const { identityToken, user: providerId, email: bodyEmail, name: bodyName } = req.body;
+  console.log(`[APPLE SIGNIN MOBILE] Received auth request. IdentityToken: ${identityToken ? 'Present' : 'Missing'}, ProviderId: ${providerId}`);
+
+  try {
+    if (!identityToken) {
+      return res.status(400).json({ error: "Identity Token is required for Apple Sign In" });
+    }
+
+    const clientId = process.env.APPLE_CLIENT_ID;
+    const bundleId = process.env.APPLE_BUNDLE_ID;
+    
+    // Verify ID Token with either Services ID (Web) or Bundle ID (Mobile)
+    const verifiedToken = await appleSignin.verifyIdToken(identityToken, {
+      audience: [bundleId, clientId].filter(Boolean),
+      ignoreExpiration: false,
+    });
+
+    const { sub, email: tokenEmail } = verifiedToken;
+    const finalProviderId = providerId || sub;
+    const email = tokenEmail || bodyEmail;
+
+    if (!email) {
+      return res.status(400).json({ error: "Email could not be verified from Apple ID Token" });
+    }
+
+    const profile = {
+      provider: 'apple',
+      providerId: finalProviderId,
+      email,
+      name: bodyName || email.split('@')[0],
+      picture: `https://ui-avatars.com/api/?name=${encodeURIComponent(bodyName || 'Apple User')}&background=000&color=fff`
+    };
+
+    console.log(`[APPLE SIGNIN MOBILE] Token verified successfully. Email: ${email}, sub: ${sub}`);
+    return handleSocialUser(profile, req, res, false);
+  } catch (err) {
+    console.error(`[APPLE SIGNIN MOBILE] Authentication Error:`, err);
+    return res.status(401).json({ error: `Apple login failed: ${err.message}` });
+  }
+});
+
 router.get("/twitter", (req, res) => {
   const { email } = req.query;
   res.send(devLoginTemplate('Twitter', email));
