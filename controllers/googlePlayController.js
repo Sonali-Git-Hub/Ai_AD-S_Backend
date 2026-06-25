@@ -82,26 +82,42 @@ export const verifyGooglePlaySubscription = async (req, res) => {
         // 2. Perform Receipt Verification
         if (!isSimulationMode) {
             try {
-                // Call Google Play Developer API
-                const response = await playDeveloperApi.purchases.subscriptions.get({
+                // Call Google Play Developer API (v2 subscription retrieval)
+                const response = await playDeveloperApi.purchases.subscriptionsv2.get({
                     packageName: process.env.GOOGLE_PLAY_PACKAGE_NAME || 'com.uwo.aisa',
-                    subscriptionId: productId,
                     token: purchaseToken
                 });
 
-                const expiryTimeMillis = response.data.expiryTimeMillis;
+                console.log('[GooglePlay IAP] API Response:', JSON.stringify(response.data));
+
+                const lineItems = response.data.lineItems || [];
+                const activeItem = lineItems.find(item => item.productId === productId) || lineItems[0];
+
+                if (!activeItem) {
+                    return res.status(400).json({ success: false, message: 'No subscription items found in Google Play purchase response.' });
+                }
+
+                const expiryTime = activeItem.expiryTime; // ISO 8601 string, e.g. "2026-07-23T15:39:42.000Z"
+                const expiryTimeMillis = expiryTime ? Date.parse(expiryTime) : 0;
 
                 // Validate expiry
-                if (expiryTimeMillis && parseInt(expiryTimeMillis) < Date.now()) {
+                if (expiryTimeMillis && expiryTimeMillis < Date.now()) {
                     return res.status(400).json({ success: false, message: 'Google Play subscription purchase has expired.' });
                 }
 
                 // Retrieve cycle from basePlanId or from request parameters
-                if (req.body.cycle === 'yearly' || (purchaseToken && purchaseToken.includes('yearly')) || (transactionId && transactionId.includes('yearly'))) {
-                    billingCycle = 'yearly';
+                let matchedCycle = 'monthly';
+                if (activeItem.offerDetails && activeItem.offerDetails.basePlanId) {
+                    const basePlanId = activeItem.offerDetails.basePlanId.toLowerCase();
+                    if (basePlanId.includes('year') || basePlanId.includes('annual')) {
+                        matchedCycle = 'yearly';
+                    }
+                } else if (req.body.cycle === 'yearly' || (purchaseToken && purchaseToken.includes('yearly')) || (transactionId && transactionId.includes('yearly'))) {
+                    matchedCycle = 'yearly';
                 }
+                billingCycle = matchedCycle;
 
-                console.log(`[GooglePlay IAP] Verified purchase successfully via Google Play API.`);
+                console.log(`[GooglePlay IAP] Verified purchase successfully via Google Play API (subscriptionsv2). Plan: ${activeItem.productId}, Cycle: ${billingCycle}`);
             } catch (err) {
                 console.error('❌ Google Play Developer API verification failed:', err.message);
                 return res.status(400).json({ success: false, message: `Google Play validation failed: ${err.message}` });

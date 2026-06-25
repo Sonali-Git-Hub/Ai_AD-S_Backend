@@ -3,6 +3,7 @@ import { getPaymentHistory, createOrder, verifyPayment } from '../controllers/pa
 import { createGooglePayOrder, verifyGooglePayment } from '../controllers/googlePayController.js';
 import { createApplePayOrder, validateAppleMerchant, verifyApplePayment } from '../controllers/applePayController.js';
 import { verifyGooglePlaySubscription } from '../controllers/googlePlayController.js';
+import { verifyAppleStoreSubscription } from '../controllers/appleStoreController.js';
 import { verifyToken } from '../middleware/authorization.js';
 
 const router = express.Router();
@@ -20,6 +21,9 @@ router.post('/google-pay/verify', verifyToken, verifyGooglePayment);
 
 // ─── Google Play Store In-App Purchase Route (Mobile App) ───────────────────
 router.post('/verify/google', verifyToken, verifyGooglePlaySubscription);
+
+// ─── Apple App Store In-App Purchase Route (Mobile App) ──────────────────────
+router.post('/verify/apple', verifyToken, verifyAppleStoreSubscription);
 
 // ─── Apple Pay Routes ────────────────────────────────────────────────────────
 // Step 1: Create Razorpay order + get applePayRequest config
