@@ -156,6 +156,10 @@ const userSchema = new mongoose.Schema({
         time: { type: Date, default: Date.now },
         isRead: { type: Boolean, default: false },
         voice: { type: String, default: 'none' }
+    }],
+    blockedUsers: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
     }]
 }, { timestamps: true });
 

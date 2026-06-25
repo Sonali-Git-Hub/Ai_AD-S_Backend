@@ -10,6 +10,8 @@ import { getSmartAvatar, isGeneratedAvatar } from "../utils/avatarHelper.js";
 import uploadMiddleware from "../middlewares/upload.middleware.js";
 import { uploadToGCS, gcsFilename } from "../services/gcs.service.js";
 import { uploadToCloudinary } from "../services/cloudinary.service.js";
+import FriendRequest from "../models/FriendRequest.js";
+import SupportTicket from "../models/SupportTicket.js";
 
 const route = express.Router()
 
@@ -524,6 +526,102 @@ route.delete("/:id", verifyToken, async (req, res) => {
     } catch (err) {
         console.error('[DELETE USER ERROR]', err);
         res.status(500).json({ error: "Failed to delete user" });
+    }
+});
+
+// POST /api/user/block/:blockedId - Block a user and remove friendship
+route.post("/block/:blockedId", verifyToken, async (req, res) => {
+    try {
+        const userId = req.user.id || req.user._id;
+        const { blockedId } = req.params;
+
+        if (!userId || !blockedId) {
+            return res.status(400).json({ error: "Missing user ID or blocked ID" });
+        }
+
+        if (userId.toString() === blockedId.toString()) {
+            return res.status(400).json({ error: "You cannot block yourself" });
+        }
+
+        const user = await userModel.findById(userId);
+        if (!user) {
+            return res.status(404).json({ error: "User not found" });
+        }
+
+        const blockedUserObj = await userModel.findById(blockedId);
+        if (!blockedUserObj) {
+            return res.status(404).json({ error: "User to block not found" });
+        }
+
+        // Initialize blockedUsers if not present
+        if (!user.blockedUsers) {
+            user.blockedUsers = [];
+        }
+
+        // Add to blockedUsers if not already there
+        if (!user.blockedUsers.includes(blockedId)) {
+            user.blockedUsers.push(blockedId);
+            await user.save();
+        }
+
+        // Delete friendship requests/status between them
+        await FriendRequest.deleteMany({
+            $or: [
+                { sender: userId, receiver: blockedId },
+                { sender: blockedId, receiver: userId }
+            ]
+        });
+
+        // Notify developers via SupportTicket
+        try {
+            const ticket = new SupportTicket({
+                name: user.name,
+                email: user.email,
+                issueType: "Other",
+                message: `[USER BLOCK EVENT] User "${user.name}" (${user.email}, ID: ${userId}) blocked user "${blockedUserObj.name}" (${blockedUserObj.email}, ID: ${blockedId}) due to offensive behaviour or harassment.`,
+                userId: userId,
+                status: "pending"
+            });
+            await ticket.save();
+        } catch (ticketErr) {
+            console.error("[BLOCK LOG] Failed to log block event support ticket:", ticketErr);
+        }
+
+        res.json({ success: true, message: "User blocked successfully" });
+    } catch (err) {
+        console.error('[BLOCK USER ERROR]', err);
+        res.status(500).json({ error: "Failed to block user" });
+    }
+});
+
+// POST /api/user/report - Report offensive content/user
+route.post("/report", verifyToken, async (req, res) => {
+    try {
+        const userId = req.user.id || req.user._id;
+        const { reportedUserId, messageId, messageContent, reason } = req.body;
+
+        if (!userId || !reportedUserId || !messageContent) {
+            return res.status(400).json({ error: "Missing required report parameters" });
+        }
+
+        const reporter = await userModel.findById(userId);
+        const reportedUser = await userModel.findById(reportedUserId);
+
+        // Notify developers via SupportTicket
+        const ticket = new SupportTicket({
+            name: reporter ? reporter.name : "Reporter",
+            email: reporter ? reporter.email : "reporter@aisa.in",
+            issueType: "Other",
+            message: `[USER REPORT CONTENT] Content reported by "${reporter ? reporter.name : 'Unknown'}" (ID: ${userId}) against "${reportedUser ? reportedUser.name : 'Unknown'}" (ID: ${reportedUserId}).\nReason: ${reason || 'N/A'}\nMessage ID: ${messageId || 'N/A'}\nReported Content: "${messageContent}"`,
+            userId: userId,
+            status: "pending"
+        });
+        await ticket.save();
+
+        res.json({ success: true, message: "Report submitted successfully" });
+    } catch (err) {
+        console.error('[REPORT CONTENT ERROR]', err);
+        res.status(500).json({ error: "Failed to submit report" });
     }
 });
 

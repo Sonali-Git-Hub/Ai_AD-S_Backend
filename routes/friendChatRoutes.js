@@ -18,10 +18,16 @@ router.get('/search', verifyToken, async (req, res) => {
         let users;
         console.log(`[FRIEND_CHAT_SEARCH] Received Query: "${query}" | Caller User ID: "${req.user.id}"`);
 
+        const currentUserObj = await User.findById(req.user.id).select('blockedUsers');
+        const blockedUsers = currentUserObj?.blockedUsers || [];
+        const usersWhoBlockedMe = await User.find({ blockedUsers: req.user.id }).select('_id');
+        const blockedMeIds = usersWhoBlockedMe.map(u => u._id);
+        const excludeIds = [req.user.id, ...blockedUsers, ...blockedMeIds];
+
         if (query && query.trim().length > 0) {
-            // Find users matching query in email or name (excluding current user)
+            // Find users matching query in email or name (excluding current user and blocked users)
             users = await User.find({
-                _id: { $ne: req.user.id },
+                _id: { $nin: excludeIds },
                 $or: [
                     { email: { $regex: query, $options: 'i' } },
                     { name: { $regex: query, $options: 'i' } }
@@ -30,7 +36,7 @@ router.get('/search', verifyToken, async (req, res) => {
         } else {
             // Return default discovery list of other users
             users = await User.find({
-                _id: { $ne: req.user.id }
+                _id: { $nin: excludeIds }
             }).select('_id name email avatar').limit(200);
         }
 
@@ -197,6 +203,12 @@ router.post('/friend-request/respond', verifyToken, async (req, res) => {
 // 4. Get Friends List (All accepted users) & Pending Requests
 router.get('/list', verifyToken, async (req, res) => {
     try {
+        const currentUserObj = await User.findById(req.user.id).select('blockedUsers');
+        const blockedUsers = currentUserObj?.blockedUsers || [];
+        const usersWhoBlockedMe = await User.find({ blockedUsers: req.user.id }).select('_id');
+        const blockedMeIds = usersWhoBlockedMe.map(u => u._id);
+        const allBlockedIds = [...blockedUsers, ...blockedMeIds].map(id => id.toString());
+
         // Find accepted friendships
         const friendships = await FriendRequest.find({
             $or: [
@@ -214,7 +226,8 @@ router.get('/list', verifyToken, async (req, res) => {
                     friendshipId: f._id,
                     user: isSender ? f.receiver : f.sender
                 };
-            });
+            })
+            .filter(f => f.user && !allBlockedIds.includes(f.user._id.toString()));
 
         // Find pending received requests
         const pendingReceived = await FriendRequest.find({
@@ -231,8 +244,8 @@ router.get('/list', verifyToken, async (req, res) => {
         res.json({
             success: true,
             friends,
-            pendingReceived: pendingReceived.filter(r => r.sender),
-            pendingSent: pendingSent.filter(r => r.receiver)
+            pendingReceived: pendingReceived.filter(r => r.sender && !allBlockedIds.includes(r.sender._id.toString())),
+            pendingSent: pendingSent.filter(r => r.receiver && !allBlockedIds.includes(r.receiver._id.toString()))
         });
     } catch (error) {
         console.error('[FRIEND_CHAT] Fetch list error:', error);
@@ -246,6 +259,16 @@ router.get('/history/:friendId', verifyToken, async (req, res) => {
         const { friendId } = req.params;
         if (!friendId) {
             return res.status(400).json({ error: 'Friend ID is required' });
+        }
+
+        // Check if either user blocked the other
+        const currentUserObj = await User.findById(req.user.id).select('blockedUsers');
+        if (currentUserObj?.blockedUsers?.includes(friendId)) {
+            return res.status(403).json({ error: 'You have blocked this user' });
+        }
+        const hasBlockedMe = await User.findOne({ _id: friendId, blockedUsers: req.user.id });
+        if (hasBlockedMe) {
+            return res.status(403).json({ error: 'You are blocked by this user' });
         }
 
         // Verify they are indeed friends
@@ -289,6 +312,16 @@ router.post('/message', verifyToken, async (req, res) => {
         const { receiverId, message } = req.body;
         if (!receiverId || !message) {
             return res.status(400).json({ error: 'Receiver ID and message content are required' });
+        }
+
+        // Check if either user blocked the other
+        const currentUserObj = await User.findById(req.user.id).select('blockedUsers');
+        if (currentUserObj?.blockedUsers?.includes(receiverId)) {
+            return res.status(403).json({ error: 'You have blocked this user' });
+        }
+        const hasBlockedMe = await User.findOne({ _id: receiverId, blockedUsers: req.user.id });
+        if (hasBlockedMe) {
+            return res.status(403).json({ error: 'You are blocked by this user' });
         }
 
         // Verify they are indeed friends
@@ -407,6 +440,16 @@ router.post('/message/media', verifyToken, uploadMiddleware, async (req, res) =>
         }
         if (!req.file) {
             return res.status(400).json({ error: 'No image file uploaded' });
+        }
+
+        // Check if either user blocked the other
+        const currentUserObj = await User.findById(req.user.id).select('blockedUsers');
+        if (currentUserObj?.blockedUsers?.includes(receiverId)) {
+            return res.status(403).json({ error: 'You have blocked this user' });
+        }
+        const hasBlockedMe = await User.findOne({ _id: receiverId, blockedUsers: req.user.id });
+        if (hasBlockedMe) {
+            return res.status(403).json({ error: 'You are blocked by this user' });
         }
 
         // Verify they are indeed friends
