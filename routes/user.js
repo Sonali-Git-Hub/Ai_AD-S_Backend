@@ -12,6 +12,7 @@ import { uploadToGCS, gcsFilename } from "../services/gcs.service.js";
 import { uploadToCloudinary } from "../services/cloudinary.service.js";
 import FriendRequest from "../models/FriendRequest.js";
 import SupportTicket from "../models/SupportTicket.js";
+import ChatSession from "../models/ChatSession.js";
 
 const route = express.Router()
 
@@ -622,6 +623,56 @@ route.post("/report", verifyToken, async (req, res) => {
     } catch (err) {
         console.error('[REPORT CONTENT ERROR]', err);
         res.status(500).json({ error: "Failed to submit report" });
+    }
+});
+
+// DELETE /api/user - Permanently delete user account and all associated data
+route.delete("/", verifyToken, async (req, res) => {
+    try {
+        const userId = req.user.id || req.user._id;
+        if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+        if (mongoose.connection.readyState !== 1) {
+            return res.status(503).json({ error: "Database unavailable. Please try again later." });
+        }
+
+        const user = await userModel.findById(userId);
+        if (!user) return res.status(404).json({ error: "User not found" });
+
+        console.log(`[DELETE ACCOUNT] Starting account deletion for user: ${userId} (${user.email})`);
+
+        // 1. Delete all chat sessions
+        const chatResult = await ChatSession.deleteMany({ userId });
+        console.log(`[DELETE ACCOUNT] Deleted ${chatResult.deletedCount} chat sessions`);
+
+        // 2. Delete all active sessions (tokens)
+        const sessionResult = await Session.deleteMany({ userId });
+        console.log(`[DELETE ACCOUNT] Deleted ${sessionResult.deletedCount} sessions`);
+
+        // 3. Delete friend requests
+        const friendResult = await FriendRequest.deleteMany({
+            $or: [{ sender: userId }, { recipient: userId }]
+        });
+        console.log(`[DELETE ACCOUNT] Deleted ${friendResult.deletedCount} friend requests`);
+
+        // 4. Delete subscription
+        const subResult = await Subscription.deleteMany({ userId });
+        console.log(`[DELETE ACCOUNT] Deleted ${subResult.deletedCount} subscriptions`);
+
+        // 5. Finally delete the user account
+        await userModel.findByIdAndDelete(userId);
+        console.log(`[DELETE ACCOUNT] User ${userId} account deleted successfully`);
+
+        res.status(200).json({
+            success: true,
+            message: "Account deleted successfully. We're sorry to see you go."
+        });
+
+    } catch (error) {
+        console.error("[DELETE ACCOUNT ERROR]", error);
+        res.status(500).json({
+            error: "Failed to delete account. Please try again or contact support."
+        });
     }
 });
 
