@@ -81,7 +81,7 @@ export const getChatSessionStats = async (req, res) => {
                       ]
                     }
                   }
-                ]
+                }
               },
               0
             ]
@@ -297,7 +297,7 @@ export const getChatSessions = async (req, res) => {
                       ]
                     }
                   }
-                ]
+                }
               },
               0
             ]
@@ -485,7 +485,7 @@ export const getChatSessionDetail = async (req, res) => {
                       ]
                     }
                   }
-                ]
+                }
               },
               0
             ]
