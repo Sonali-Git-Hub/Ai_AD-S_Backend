@@ -1,4 +1,8 @@
 import express, { urlencoded } from "express";
+import dns from 'dns';
+try {
+    dns.setServers(['8.8.8.8', '1.1.1.1']);
+} catch (e) {}
 import 'dotenv/config';
 import connectDB from "./config/db.js";
 import chatRoutes from "./routes/chatRoutes.js";

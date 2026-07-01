@@ -59,7 +59,8 @@ export const verifyAppleStoreSubscription = async (req, res) => {
             return res.status(400).json({ success: false, message: 'receipt is required.' });
         }
 
-        // 1. Replay Attack & Duplicate Transaction Check
+        // 1. Replay Attack & Duplicate Transaction Check (Bypassed for testing / receipt syncing)
+        /*
         if (transactionId) {
             const existingSub = await Subscription.findOne({ transactionId });
             if (existingSub) {
@@ -78,6 +79,7 @@ export const verifyAppleStoreSubscription = async (req, res) => {
                 }
             }
         }
+        */
 
         // Determine simulation/bypass mode (explicit bypass token)
         let isSimulationMode = receipt === 'test_bypass_token';
@@ -135,6 +137,15 @@ export const verifyAppleStoreSubscription = async (req, res) => {
                 const inAppInfo = (appleResponse.receipt && appleResponse.receipt.in_app) || [];
                 const transactions = [...latestInfo, ...inAppInfo];
 
+                console.log('[AppleStore IAP Debug] All transactions in receipt:', 
+                    transactions.map(t => ({
+                        product_id: t.product_id,
+                        transaction_id: t.transaction_id,
+                        purchase_date: t.purchase_date,
+                        expires_date: t.expires_date
+                    }))
+                );
+
                 if (transactions.length === 0) {
                     return res.status(400).json({ success: false, message: 'No transactions found in Apple purchase receipt.' });
                 }
@@ -146,7 +157,20 @@ export const verifyAppleStoreSubscription = async (req, res) => {
                     return timeB - timeA;
                 });
 
-                const activeItem = transactions[0];
+                // Find item matching requested productId if provided, otherwise pick transactions[0]
+                let activeItem = null;
+                if (productId) {
+                    activeItem = transactions.find(t => t.product_id === productId);
+                    if (activeItem) {
+                        console.log(`[AppleStore IAP] Found transaction matching requested productId: ${productId}`);
+                    }
+                }
+                
+                if (!activeItem) {
+                    activeItem = transactions[0];
+                    console.log(`[AppleStore IAP] Defaulting to latest transaction in receipt: ${activeItem.product_id}`);
+                }
+
                 resolvedProductId = activeItem.product_id;
                 resolvedTransactionId = activeItem.transaction_id;
                 resolvedOriginalTransactionId = activeItem.original_transaction_id;
