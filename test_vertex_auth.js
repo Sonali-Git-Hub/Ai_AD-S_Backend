@@ -3,7 +3,7 @@ import 'dotenv/config';
 
 async function testAuth() {
   const projectId = process.env.GCP_PROJECT_ID;
-  const location = 'us-central1';
+  const location = 'asia-south1';
   
   console.log(`Testing Vertex AI Auth...`);
   console.log(`Project ID: ${projectId}`);
@@ -11,7 +11,7 @@ async function testAuth() {
 
   try {
     const vertexAI = new VertexAI({ project: projectId, location: location });
-    const model = vertexAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = vertexAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     
     console.log('Sending test request...');
     const result = await model.generateContent('Say hello');

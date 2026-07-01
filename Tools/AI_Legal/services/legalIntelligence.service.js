@@ -8,71 +8,88 @@ import { safeParseLLMJson } from '../../../utils/jsonUtils.js';
  */
 export const analyzeCaseDetails = async (rawText, currentData = {}) => {
     const prompt = [
-        'You are an advanced autonomous Legal Intelligence Engine.',
-        'Your job is to fully analyze a legal case and generate COMPLETE structured output for a legal dashboard system.',
+        'You are an advanced, specialized Legal AI Intelligence Engine. Your task is to perform a thorough, professional legal analysis on raw input text (which may contain case facts, client details, notes, or uploaded document content) and generate a complete structured JSON analysis report.',
         '',
-        '-------------------------------------',
-        '⚠️ CRITICAL RULES (MUST FOLLOW):',
-        '1. Output ONLY valid JSON',
-        '2. Do NOT return any explanation or text outside JSON',
-        '3. Do NOT leave any field empty',
-        '4. If input data is incomplete, intelligently generate realistic legal assumptions',
-        '5. NEVER return null or empty arrays',
-        '6. Ensure all sections are filled with meaningful data',
-        '7. If analysis fails, return fallback structured data (do NOT break JSON)',
-        '-------------------------------------',
+        '### Input Data Provided:',
+        `- Client Name: ${currentData.clientName || 'Not specified'}`,
+        `- Opponent Name: ${currentData.opponentName || 'Not specified'}`,
+        `- Case Type: ${currentData.caseType || 'Not specified'}`,
+        `- Raw Case Facts/Details: ${rawText}`,
         '',
-        'INPUT CASE:',
-        `Case Summary: ${rawText}`,
-        `Client: ${currentData.clientName || 'Not specified'}`,
-        `Opponent: ${currentData.opponentName || 'Not specified'}`,
-        `Case Type: ${currentData.caseType || 'Not specified'}`,
-        '-------------------------------------',
+        '### Critical Execution Rules:',
+        '1. Output MUST be strictly valid JSON.',
+        '2. Do NOT include any introductory or concluding text, explanations, or formatting outside of the JSON structure itself.',
+        '3. If the input case facts are sparse or incomplete, you MUST use your advanced legal reasoning to make realistic, logical, and context-aware assumptions to fill out all sections. Do not leave any fields empty.',
+        '4. Ensure all generated advice, applicable laws, and steps are realistic and highly relevant to the specific context of the dispute (e.g., if it is a cheque bounce case in India, reference Section 138 of the Negotiable Instruments Act; if it is a breach of contract, reference contract laws, etc.).',
+        '5. Do NOT return null, undefined, or empty arrays.',
         '',
-        'OUTPUT FORMAT (STRICT):',
+        '### Expected JSON Output Schema:',
         JSON.stringify({
-            executive_summary: "Clear summary of the case",
-            case_strength: 0,
-            win_probability: 0,
-            timeline: [{ date: "DD Month YYYY", event: "Event title", description: "Explanation" }],
-            parties: {
-                plaintiff: { name: "Name", role: "Role" },
-                defendant: { name: "Name", role: "Role" }
+          "executive_summary": "Provide a detailed, professional paragraph summarizing the core dispute, facts, timeline highlights, and legal position.",
+          "case_strength": 75, 
+          "win_probability": 65, 
+          "parties": {
+            "plaintiff": {
+              "name": "Name of the Plaintiff / Client",
+              "role": "Role (e.g., Petitioner / Complainant)"
             },
-            evidence: [{ title: "Evidence name", type: "document/email/witness", description: "Details", strength: "weak/medium/strong" }],
-            legal_research: [{ law: "Law name", section: "Section", description: "Explanation" }],
-            process_steps: [{ step: "Legal step", priority: "low/medium/high" }],
-            risk_assessment: { level: "low/medium/high", reason: "Why" },
-            critical_vulnerabilities: ["Weakness 1", "Weakness 2"],
-            opponent_strategy: ["Possible opponent move"],
-            primary_relief: "What the user wants legally",
-            strategy_recommendation: ["Step 1", "Step 2"]
+            "defendant": {
+              "name": "Name of the Defendant / Opponent",
+              "role": "Role (e.g., Respondent / Accused)"
+            }
+          },
+          "timeline": [
+            {
+              "date": "YYYY-MM-DD",
+              "event": "Short title of the event",
+              "description": "Details of what occurred on this date"
+            }
+          ],
+          "evidence": [
+            {
+              "title": "Document/Evidence Name (e.g., Original Loan Agreement, Dishonour Memo)",
+              "type": "document / electronic_record / witness / physical_evidence",
+              "description": "How this evidence proves or supports the claim.",
+              "strength": "strong / medium / weak"
+            }
+          ],
+          "legal_research": [
+            {
+              "law": "Name of the Act/Statute (e.g., Negotiable Instruments Act, 1881)",
+              "section": "Specific Section (e.g., Section 138)",
+              "description": "Detailed explanation of how this specific section applies to the case facts."
+            }
+          ],
+          "process_steps": [
+            {
+              "step": "Actionable task for the lawyer (e.g., Draft and serve 15-day statutory demand notice)",
+              "priority": "high / medium / low"
+            }
+          ],
+          "risk_assessment": {
+            "level": "low / medium / high / critical",
+            "reason": "Clear explanation of the main risk factors or evidentiary loopholes in the case."
+          },
+          "critical_vulnerabilities": [
+            "Specific vulnerability 1 (e.g., Notice was served 2 days past the statutory limit)",
+            "Specific vulnerability 2"
+          ],
+          "opponent_strategy": [
+            "Likely defence tactic 1 (e.g., Opponent will claim the signature on the cheque was forged)",
+            "Likely defence tactic 2"
+          ],
+          "primary_relief": "The ultimate remedy or compensation the client is seeking (e.g., Recovery of principal amount ₹5,00,000 along with 18% interest and legal costs).",
+          "strategy_recommendation": [
+            "Actionable strategy recommendation 1",
+            "Actionable strategy recommendation 2"
+          ]
         }, null, 2),
         '',
-        '-------------------------------------',
-        '📊 QUALITY CONSTRAINTS:',
-        '- timeline MUST have at least 3 events',
-        '- evidence MUST have at least 2 items',
-        '- legal_research MUST include real applicable laws (prefer Indian laws if relevant)',
-        '- process_steps MUST be realistic legal workflow',
-        '- risk_assessment MUST NOT be empty',
-        '- strategy_recommendation MUST be actionable',
-        '',
-        '-------------------------------------',
-        '🛑 FAILSAFE MODE:',
-        'If you cannot analyze properly, STILL return full JSON using intelligent assumptions.',
-        'Example fallback:',
-        '- Generate reasonable timeline',
-        '- Generate generic but realistic evidence',
-        '- Assign medium risk',
-        '- Provide general legal strategy',
-        '',
-        '-------------------------------------',
-        'FINAL INSTRUCTION:',
-        'Return ONLY JSON.',
-        'No markdown.',
-        'No explanation.',
-        'No extra text.'
+        '### Quality Guidelines:',
+        '- The "timeline" array must have at least 3 events.',
+        '- The "evidence" array must have at least 2 relevant entries.',
+        '- The "legal_research" array must list at least 2 real, legally correct sections/statutes.',
+        '- The "process_steps" array must act as a checklist of legal actions for the lawyer.'
     ].join('\n');
 
     try {
