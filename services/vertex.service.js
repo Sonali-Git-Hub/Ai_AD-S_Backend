@@ -433,6 +433,30 @@ export const AskVertexRaw = async (prompt, options = {}) => {
         // Log full error details for debugging
         logger.error(`[AskVertexRaw] FULL ERROR: ${err.message}`);
         if (err.stack) logger.debug(`[AskVertexRaw] Stack Trace: ${err.stack}`);
+
+        // Try OpenAI fallback if Vertex/Gemini authentication/init fails
+        const isAuthOrInitError = err.message.includes("authenticate") || 
+                                  err.message.includes("credential") || 
+                                  err.message.includes("GoogleAuth") ||
+                                  err.message.includes("not initialized") ||
+                                  err.message.includes("model initialized") ||
+                                  err.message.includes("API key") ||
+                                  err.message.includes("not available");
+
+        if (isAuthOrInitError && process.env.OPENAI_API_KEY) {
+            logger.warn(`[AskVertexRaw] Vertex AI Auth/Init failed. Falling back to OpenAI (gpt-4o)...`);
+            try {
+                const openaiService = await import('./openai.service.js');
+                const response = await openaiService.askOpenAI(prompt, null, {
+                    jsonMode: options.isJson,
+                    temperature: options.temperature || 0.7
+                });
+                return response;
+            } catch (openAiErr) {
+                logger.error(`[AskVertexRaw] OpenAI fallback failed: ${openAiErr.message}`);
+            }
+        }
+
         if ((err.message.includes("404") || err.message.includes("NOT_FOUND")) && !options.isFallback) {
             logger.warn(`[AskVertexRaw] Model ${options.modelOverride || modelName} not found in asia-south1. Check model availability.`);
             // Do NOT fallback to gemini-1.5-pro — not available in asia-south1
@@ -599,6 +623,31 @@ export const askVertex = async (prompt, context = null, options = {}) => {
     } catch (error) {
         logger.error(`[VERTEX] Error: ${error.message}`);
         if (error.stack) logger.debug(`[VERTEX] Stack: ${error.stack}`);
+
+        // Try OpenAI fallback if Vertex/Gemini authentication/init fails
+        const isAuthOrInitError = error.message.includes("authenticate") || 
+                                  error.message.includes("credential") || 
+                                  error.message.includes("GoogleAuth") ||
+                                  error.message.includes("not initialized") ||
+                                  error.message.includes("initialized") ||
+                                  error.message.includes("API key") ||
+                                  error.message.includes("not available");
+
+        if (isAuthOrInitError && process.env.OPENAI_API_KEY) {
+            logger.warn(`[VERTEX] Vertex AI Auth/Init failed. Falling back to OpenAI (gpt-4o)...`);
+            try {
+                const openaiService = await import('./openai.service.js');
+                const response = await openaiService.askOpenAI(prompt, context, {
+                    systemInstruction: options.systemInstruction,
+                    userName: options.userName,
+                    image: options.images?.[0], // simple conversion if any
+                    jsonMode: options.isJson || (options.systemInstruction && options.systemInstruction.includes("JSON"))
+                });
+                return response;
+            } catch (openAiErr) {
+                logger.error(`[VERTEX] OpenAI fallback failed: ${openAiErr.message}`);
+            }
+        }
 
         // Specific error for model not found 
         if ((error.message.includes("404") || error.message.includes("NOT_FOUND")) && !options.isFallback) {
