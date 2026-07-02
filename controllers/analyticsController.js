@@ -18,14 +18,14 @@ const getDateRange = (range = '7d') => {
 
 // ─── Error pattern classification ────────────────────────────────────────────
 const ERROR_PATTERNS = [
-    { label: 'Timeout / Slow Response',    regex: /timeout|timed out|time.?out/i,                              color: '#FFB347', icon: 'clock' },
-    { label: 'AI Generation Failed',       regex: /❌|generation failed|could not generate|failed to generate/i, color: '#FF6584', icon: 'x-circle' },
-    { label: 'File / Document Error',      regex: /could not (read|parse|process|extract)|file (not found|error|failed)|document error/i, color: '#E57373', icon: 'file-x' },
-    { label: 'AI Refusal / Safety',        regex: /sorry.{0,40}(cannot|unable|can't)|I (can't|cannot|am unable) (help|assist|do|process)|not able to assist|content policy/i, color: '#4FC3F7', icon: 'shield' },
-    { label: 'Network / API Error',        regex: /network error|api error|connection (failed|error|refused)|503|502|500 internal/i, color: '#BA68C8', icon: 'wifi-off' },
-    { label: 'Permission / Auth Error',    regex: /unauthorized|forbidden|not (allowed|permitted|authorized)|access denied/i, color: '#FF8A65', icon: 'lock' },
-    { label: 'Token / Quota Exceeded',     regex: /quota|limit (exceeded|reached)|out of (credits|tokens|quota)|plan limit/i, color: '#FFD54F', icon: 'zap-off' },
-    { label: 'System / Internal Error',    regex: /internal (server )?error|unexpected error|something went wrong|an error occurred/i, color: '#EF5350', icon: 'alert-triangle' },
+    { label: 'Timeout / Slow Response', regex: /timeout|timed out|time.?out/i, color: '#FFB347', icon: 'clock' },
+    { label: 'AI Generation Failed', regex: /❌|generation failed|could not generate|failed to generate/i, color: '#FF6584', icon: 'x-circle' },
+    { label: 'File / Document Error', regex: /could not (read|parse|process|extract)|file (not found|error|failed)|document error/i, color: '#E57373', icon: 'file-x' },
+    { label: 'AI Refusal / Safety', regex: /sorry.{0,40}(cannot|unable|can't)|I (can't|cannot|am unable) (help|assist|do|process)|not able to assist|content policy/i, color: '#4FC3F7', icon: 'shield' },
+    { label: 'Network / API Error', regex: /network error|api error|connection (failed|error|refused)|503|502|500 internal/i, color: '#BA68C8', icon: 'wifi-off' },
+    { label: 'Permission / Auth Error', regex: /unauthorized|forbidden|not (allowed|permitted|authorized)|access denied/i, color: '#FF8A65', icon: 'lock' },
+    { label: 'Token / Quota Exceeded', regex: /quota|limit (exceeded|reached)|out of (credits|tokens|quota)|plan limit/i, color: '#FFD54F', icon: 'zap-off' },
+    { label: 'System / Internal Error', regex: /internal (server )?error|unexpected error|something went wrong|an error occurred/i, color: '#EF5350', icon: 'alert-triangle' },
 ];
 
 const classifyError = (content) => {
@@ -133,15 +133,15 @@ export const getErrorDrillDown = async (req, res) => {
         // Mode alias map
         const modeAliasMap = {
             'LEGAL_TOOLKIT': ['LEGAL_TOOLKIT', 'legal', 'LEGAL'],
-            'NORMAL_CHAT':   ['NORMAL_CHAT', 'chat', 'CHAT'],
+            'NORMAL_CHAT': ['NORMAL_CHAT', 'chat', 'CHAT'],
             'IMAGE_GENERATION': ['IMAGE_GENERATION', 'imageGen', 'image'],
             'VIDEO_GENERATION': ['VIDEO_GENERATION', 'videoGen', 'video'],
-            'IMAGE_EDIT':    ['IMAGE_EDIT', 'editImage', 'edit_image'],
+            'IMAGE_EDIT': ['IMAGE_EDIT', 'editImage', 'edit_image'],
             'AUDIO_CONVERT': ['AUDIO_CONVERT', 'audioGen', 'audio'],
             'DOCUMENT_CONVERT': ['DOCUMENT_CONVERT', 'document'],
-            'CODE_WRITER':   ['CODE_WRITER', 'CODING_HELP', 'code'],
-            'CASHFLOW':      ['CASHFLOW', 'ai_cashflow'],
-            'RAG':           ['RAG', 'rag'],
+            'CODE_WRITER': ['CODE_WRITER', 'CODING_HELP', 'code'],
+            'CASHFLOW': ['CASHFLOW', 'ai_cashflow'],
+            'RAG': ['RAG', 'rag'],
         };
         const modeVariants = modeAliasMap[mode] || [mode];
         const modeMatch = { $in: modeVariants };
@@ -154,13 +154,13 @@ export const getErrorDrillDown = async (req, res) => {
             {
                 $group: {
                     _id: '$_id',
-                    sessionId:    { $first: '$sessionId' },
-                    createdAt:    { $first: '$createdAt' },
+                    sessionId: { $first: '$sessionId' },
+                    createdAt: { $first: '$createdAt' },
                     detectedMode: { $first: '$detectedMode' },
-                    activeTool:   { $first: '$activeTool' },
-                    userId:       { $first: '$userId' },
-                    errorMsgs:    { $push: '$messages.content' },
-                    errorCount:   { $sum: 1 }
+                    activeTool: { $first: '$activeTool' },
+                    userId: { $first: '$userId' },
+                    errorMsgs: { $push: '$messages.content' },
+                    errorCount: { $sum: 1 }
                 }
             },
             { $sort: { errorCount: -1 } },
@@ -168,14 +168,14 @@ export const getErrorDrillDown = async (req, res) => {
         ]);
 
         // Classify errors into patterns
-        const patternCounts   = {};
-        const patternSamples  = {};
+        const patternCounts = {};
+        const patternSamples = {};
         const patternSessions = {};
 
         for (const doc of rawErrorDocs) {
             for (const msg of doc.errorMsgs) {
                 const pattern = classifyError(msg);
-                const label   = pattern.label;
+                const label = pattern.label;
                 patternCounts[label] = (patternCounts[label] || 0) + 1;
 
                 if (!patternSamples[label]) patternSamples[label] = [];
@@ -194,12 +194,12 @@ export const getErrorDrillDown = async (req, res) => {
         const allPatterns = [...ERROR_PATTERNS, { label: 'General Error', color: '#9E9E9E', icon: 'alert-circle' }];
         const patterns = allPatterns
             .map(p => ({
-                label:        p.label,
-                color:        p.color,
-                icon:         p.icon,
-                count:        patternCounts[p.label] || 0,
+                label: p.label,
+                color: p.color,
+                icon: p.icon,
+                count: patternCounts[p.label] || 0,
                 sessionCount: patternSessions[p.label]?.size || 0,
-                samples:      patternSamples[p.label] || []
+                samples: patternSamples[p.label] || []
             }))
             .filter(p => p.count > 0)
             .sort((a, b) => b.count - a.count);
@@ -223,7 +223,7 @@ export const getErrorDrillDown = async (req, res) => {
                 $group: {
                     _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
                     errorCount: { $sum: 1 },
-                    sessions:   { $addToSet: '$sessionId' }
+                    sessions: { $addToSet: '$sessionId' }
                 }
             },
             { $project: { _id: 1, errorCount: 1, sessionCount: { $size: '$sessions' } } },
@@ -232,11 +232,11 @@ export const getErrorDrillDown = async (req, res) => {
 
         // Recent affected sessions
         const recentSessions = rawErrorDocs.slice(0, 15).map(doc => ({
-            sessionId:  doc.sessionId,
-            createdAt:  doc.createdAt,
+            sessionId: doc.sessionId,
+            createdAt: doc.createdAt,
             errorCount: doc.errorCount,
             activeTool: doc.activeTool || 'General',
-            topError:   (doc.errorMsgs[0] || '').replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 200)
+            topError: (doc.errorMsgs[0] || '').replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 200)
         }));
 
         res.status(200).json({
@@ -244,7 +244,7 @@ export const getErrorDrillDown = async (req, res) => {
             mode, range,
             drillDown: {
                 totalErrorInstances: rawErrorDocs.reduce((acc, d) => acc + d.errorCount, 0),
-                affectedSessions:    rawErrorDocs.length,
+                affectedSessions: rawErrorDocs.length,
                 patterns,
                 toolStats,
                 dailyErrors,
