@@ -185,9 +185,10 @@ const processPrecedentWithAI = async (caseData, context = null, language = 'Engl
         };
     }
 
+    const DO_NOT_TRANSLATE_LIST = "Case Titles, Judge Names, Advocate Names, Party Names, Court Names, Citation Numbers, SCC / AIR / SCR citations, Case Numbers, Section Numbers, Article Numbers, Statute Identifiers.";
     const isHindi = language === 'Hindi' || language === 'hi';
     const langRule = isHindi
-        ? "\n\n### MANDATORY LANGUAGE RULE:\n- Generate ALL text in HINDI.\n- Use 'Simple Hindi + English term in brackets' for all legal concepts (e.g. 'अनुबंध (Contract)', 'शपथ पत्र (Affidavit)').\n- Maintain professional legal tone."
+        ? `\n\n### MANDATORY LANGUAGE RULE:\n- Generate ALL text strictly in Hindi (Devanagari script).\n- Do NOT include any English terms in brackets (e.g. do NOT output 'अनुबंध (Contract)', output only 'अनुबंध' or equivalent clean Hindi).\n- Maintain a professional, native legal Hindi tone.\n- CRITICAL: DO NOT TRANSLATE the following identifiers (keep them in English): ${DO_NOT_TRANSLATE_LIST}`
         : `\n\n### MANDATORY LANGUAGE RULE:\n- Respond entirely in ${language}.`;
 
     const prompt = `
@@ -285,9 +286,10 @@ const processPrecedentWithAI = async (caseData, context = null, language = 'Engl
 export const processPrecedentsBatchWithAI = async (candidates, context = null, language = 'English') => {
     if (!candidates || candidates.length === 0) return [];
 
+    const DO_NOT_TRANSLATE_LIST = "Case Titles, Judge Names, Advocate Names, Party Names, Court Names, Citation Numbers, SCC / AIR / SCR citations, Case Numbers, Section Numbers, Article Numbers, Statute Identifiers.";
     const isHindi = language === 'Hindi' || language === 'hi';
     const langRule = isHindi
-        ? "\n\n### MANDATORY LANGUAGE RULE:\n- Generate ALL text in HINDI.\n- Use 'Simple Hindi + English term in brackets' for all legal concepts (e.g. 'अनुबंध (Contract)', 'शपथ पत्र (Affidavit)').\n- Maintain professional legal tone."
+        ? `\n\n### MANDATORY LANGUAGE RULE:\n- Generate ALL text strictly in Hindi (Devanagari script).\n- Do NOT include any English terms in brackets (e.g. do NOT output 'अनुबंध (Contract)', output only 'अनुबंध' or equivalent clean Hindi).\n- Maintain a professional, native legal Hindi tone.\n- CRITICAL: DO NOT TRANSLATE the following identifiers (keep them in English): ${DO_NOT_TRANSLATE_LIST}`
         : `\n\n### MANDATORY LANGUAGE RULE:\n- Respond entirely in ${language}.`;
 
     // We serialize candidates for the prompt
@@ -425,9 +427,10 @@ export const processPrecedentsBatchWithAI = async (candidates, context = null, l
  * Performs specific AI tasks like Summarization or Comparison.
  */
 export const analyzePrecedent = async (actionType, precedentData, activeCaseData = null, language = 'English') => {
+    const DO_NOT_TRANSLATE_LIST = "Case Titles, Judge Names, Advocate Names, Party Names, Court Names, Citation Numbers, SCC / AIR / SCR citations, Case Numbers, Section Numbers, Article Numbers, Statute Identifiers.";
     const isHindi = language === 'Hindi' || language === 'hi';
     const langRule = isHindi
-        ? "\n\n### MANDATORY LANGUAGE RULE:\n- Generate ALL text in HINDI.\n- Use professional legal Hindi terminology.\n- Maintain high formal tone."
+        ? `\n\n### MANDATORY LANGUAGE RULE:\n- Generate ALL text in HINDI.\n- Use professional legal Hindi terminology.\n- Maintain high formal tone.\n- CRITICAL: DO NOT TRANSLATE the following identifiers (keep them in English): ${DO_NOT_TRANSLATE_LIST}`
         : `\n\n### MANDATORY LANGUAGE RULE:\n- Respond entirely in ${language}.`;
 
     let prompt = "";

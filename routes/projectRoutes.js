@@ -10,9 +10,9 @@ const router = express.Router();
 // @access  Private
 router.post('/', verifyToken, async (req, res) => {
     try {
-        const { 
-            name, clientName, summary, keyIssue, importantDates, isLegalCase, 
-            caseType, accused, status, stage, priority, opponentName, lawyers, 
+        const {
+            name, clientName, summary, keyIssue, importantDates, isLegalCase,
+            caseType, accused, status, stage, priority, opponentName, lawyers,
             facts, legalIssues, reliefGoals, intelligence, tasks, communicationLogs, research, hearings
         } = req.body;
 
@@ -91,7 +91,7 @@ router.get('/:id', verifyToken, async (req, res) => {
 router.put('/:id', verifyToken, async (req, res) => {
     try {
         const updateData = req.body;
-        
+
         // Ensure userId cannot be changed via update
         delete updateData.userId;
         delete updateData._id;
@@ -113,24 +113,24 @@ router.put('/:id', verifyToken, async (req, res) => {
 // Shared analysis handler to keep code DRY and consistent
 const performCaseAnalysis = async (req, res) => {
     try {
-        const { rawText } = req.body;
+        const { rawText, language } = req.body;
         const project = await Project.findOne({ _id: req.params.id, userId: req.user.id });
-        
+
         if (!project) {
             return res.status(404).json({ error: 'Case not found' });
         }
 
         let inputText = rawText || '';
-        if (!inputText || 
-            inputText.includes("__AI_ANALYSIS_FAILED__") || 
+        if (!inputText ||
+            inputText.includes("__AI_ANALYSIS_FAILED__") ||
             inputText.includes("AI Analysis Error") ||
             inputText.includes("AI Request Failed") ||
             inputText.includes("could not process the request")) {
             inputText = project.description || project.name;
         }
-        
-        const aiResponse = await legalIntelligenceService.analyzeCaseDetails(inputText, project);
-        
+
+        const aiResponse = await legalIntelligenceService.analyzeCaseDetails(inputText, project, language);
+
         const aiData = typeof aiResponse === "string" ? JSON.parse(aiResponse) : aiResponse;
 
         // Sanitization helpers

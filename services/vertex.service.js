@@ -292,7 +292,7 @@ export const detectRAGNeed = async (query) => {
         // 2. STRICT KEYWORD MATCHING: Only trigger RAG for AISA, AI MALL, UWO, and specific features
         const ragKeywords = ['aisa', 'ai mall', 'uwo', 'feature', 'pricing', 'plan', 'mall', 'refund', 'policy', 'capabilities'];
         const hasRagKeyword = ragKeywords.some(k => lower.includes(k));
-        
+
         if (hasRagKeyword) {
             logger.info(`[RAG-Detector] Keyword match triggered RAG for: "${query}"`);
             return true;
@@ -435,13 +435,13 @@ export const AskVertexRaw = async (prompt, options = {}) => {
         if (err.stack) logger.debug(`[AskVertexRaw] Stack Trace: ${err.stack}`);
 
         // Try OpenAI fallback if Vertex/Gemini authentication/init fails
-        const isAuthOrInitError = err.message.includes("authenticate") || 
-                                  err.message.includes("credential") || 
-                                  err.message.includes("GoogleAuth") ||
-                                  err.message.includes("not initialized") ||
-                                  err.message.includes("model initialized") ||
-                                  err.message.includes("API key") ||
-                                  err.message.includes("not available");
+        const isAuthOrInitError = err.message.includes("authenticate") ||
+            err.message.includes("credential") ||
+            err.message.includes("GoogleAuth") ||
+            err.message.includes("not initialized") ||
+            err.message.includes("model initialized") ||
+            err.message.includes("API key") ||
+            err.message.includes("not available");
 
         if (isAuthOrInitError && process.env.OPENAI_API_KEY) {
             logger.warn(`[AskVertexRaw] Vertex AI Auth/Init failed. Falling back to OpenAI (gpt-4o)...`);
@@ -509,7 +509,7 @@ export const askVertex = async (prompt, context = null, options = {}) => {
 
         const rawModelName = options.modelOverride || modelName;
         const selectedModelName = modelMap[rawModelName] || rawModelName;
-        
+
         if (selectedModelName && genAIInstance) {
             logger.info(`[VERTEX] Mapping: ${rawModelName} -> ${selectedModelName} (with System Instruction)`);
             model = genAIInstance.getGenerativeModel({
@@ -625,13 +625,13 @@ export const askVertex = async (prompt, context = null, options = {}) => {
         if (error.stack) logger.debug(`[VERTEX] Stack: ${error.stack}`);
 
         // Try OpenAI fallback if Vertex/Gemini authentication/init fails
-        const isAuthOrInitError = error.message.includes("authenticate") || 
-                                  error.message.includes("credential") || 
-                                  error.message.includes("GoogleAuth") ||
-                                  error.message.includes("not initialized") ||
-                                  error.message.includes("initialized") ||
-                                  error.message.includes("API key") ||
-                                  error.message.includes("not available");
+        const isAuthOrInitError = error.message.includes("authenticate") ||
+            error.message.includes("credential") ||
+            error.message.includes("GoogleAuth") ||
+            error.message.includes("not initialized") ||
+            error.message.includes("initialized") ||
+            error.message.includes("API key") ||
+            error.message.includes("not available");
 
         if (isAuthOrInitError && process.env.OPENAI_API_KEY) {
             logger.warn(`[VERTEX] Vertex AI Auth/Init failed. Falling back to OpenAI (gpt-4o)...`);
