@@ -146,7 +146,51 @@ const projectSchema = new mongoose.Schema({
             enum: ['Upcoming', 'Completed', 'Missed'], 
             default: 'Upcoming' 
         }
-    }]
+    }],
+    // --- Auto-Generated Case Intelligence Metadata ---
+    internalCaseId: {
+        type: String,
+        unique: true,
+        sparse: true
+    },
+    uuid: {
+        type: String,
+        unique: true,
+        sparse: true
+    },
+    createdDate: {
+        type: Date,
+        default: Date.now
+    },
+    lastUpdated: {
+        type: Date,
+        default: Date.now
+    },
+    createdBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+    },
+    advocateId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+    },
+    activityLog: [{
+        action: String,
+        timestamp: { type: Date, default: Date.now },
+        details: String
+    }],
+    evidenceCount: {
+        type: Number,
+        default: 0
+    },
+    searchIndex: {
+        type: String,
+        default: ''
+    },
+    aiSummary: {
+        type: String,
+        default: ''
+    }
 }, { 
     timestamps: true,
     strict: false 

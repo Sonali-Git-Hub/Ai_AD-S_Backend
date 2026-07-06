@@ -476,18 +476,20 @@ export const askVertex = async (prompt, context = null, options = {}) => {
 
         // Inject Brand Identity if no specific instructions provided
         const currentDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
-        const dateContext = `\n### CURRENT DATE & TIME:\nToday is ${currentDate} (India Standard Time). (Aaj ki date aur samay: ${currentDate})\n`;
+        const dateContext = `\n[System Context - Current Date & Time: Today is ${currentDate} (India Standard Time).]\n`;
+
+        const isLegal = options.mode === 'LEGAL_TOOLKIT' || (systemInstruction && systemInstruction.includes('LEGAL_TOOLKIT'));
 
         if (!systemInstruction) {
-            systemInstruction = configService.getFullSystemInstruction() + dateContext;
+            systemInstruction = configService.getFullSystemInstruction() + (isLegal ? "" : dateContext);
         } else {
             // Append date context even to custom instructions for reference
-            systemInstruction = systemInstruction + dateContext;
+            systemInstruction = systemInstruction + (isLegal ? "" : dateContext);
         }
 
         // Add User Name context if provided
         if (options.userName) {
-            systemInstruction += `\n### USER IDENTIFICATION:\nThe user's name is ${options.userName}. You MUST use their name to address them directly and naturally in your responses (e.g., "Yes, Sakshi", or "Here is the information, ${options.userName}"). Make the conversation feel personalized by acknowledging their name.\n`;
+            systemInstruction += `\n[System Context - User Identity: The user's name is ${options.userName}. Acknowledge or address them by name naturally if appropriate, without repeating this system context block in your response.]\n`;
         }
 
         let finalPrompt = prompt;
@@ -563,9 +565,28 @@ export const askVertex = async (prompt, context = null, options = {}) => {
         }
 
         // 3. Generate Content
+        let contents = [];
+        if (options.history && Array.isArray(options.history)) {
+            let lastRole = null;
+            options.history.forEach(h => {
+                const role = h.role === 'assistant' || h.role === 'model' ? 'model' : 'user';
+                if (role !== lastRole) {
+                    contents.push({
+                        role: role,
+                        parts: Array.isArray(h.parts) ? h.parts.map(p => typeof p === 'string' ? { text: p } : p) : [{ text: h.content || h.text || "" }]
+                    });
+                    lastRole = role;
+                }
+            });
+            if (lastRole === 'user') {
+                contents.pop();
+            }
+        }
+        contents.push({ role: 'user', parts });
+
         let result;
         try {
-            result = await model.generateContent({ contents: [{ role: 'user', parts }] });
+            result = await model.generateContent({ contents });
         } catch (execErr) {
             if ((execErr.message.includes("404") || execErr.message.includes("NOT_FOUND")) && selectedModelName !== 'gemini-2.5-flash') {
                 logger.warn(`[VERTEX] Execution failed for ${selectedModelName}. Retrying with gemini-2.5-flash.`);
@@ -574,7 +595,7 @@ export const askVertex = async (prompt, context = null, options = {}) => {
                     systemInstruction: systemInstruction,
                     generationConfig: { maxOutputTokens: 4096 }
                 });
-                result = await fallbackModel.generateContent({ contents: [{ role: 'user', parts }] });
+                result = await fallbackModel.generateContent({ contents });
             } else {
                 throw execErr;
             }
@@ -638,10 +659,11 @@ export const askVertex = async (prompt, context = null, options = {}) => {
             try {
                 const openaiService = await import('./openai.service.js');
                 const response = await openaiService.askOpenAI(prompt, context, {
-                    systemInstruction: options.systemInstruction,
+                    systemInstruction: systemInstruction,
                     userName: options.userName,
+                    mode: options.mode || 'LEGAL_TOOLKIT',
                     image: options.images?.[0], // simple conversion if any
-                    jsonMode: options.isJson || (options.systemInstruction && options.systemInstruction.includes("JSON"))
+                    jsonMode: options.isJson || (systemInstruction && systemInstruction.includes("JSON"))
                 });
                 return response;
             } catch (openAiErr) {
