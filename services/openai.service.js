@@ -12,29 +12,49 @@ export const askOpenAI = async (prompt, context = null, options = {}) => {
             throw new Error("OPENAI_API_KEY is missing in environment variables.");
         }
 
-        const { systemInstruction, userName } = options;
+        const { systemInstruction, userName, mode } = options;
 
         let messages = [];
 
         // 1. Add System Instruction if provided
         const currentDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
-        const dateContext = `\n### CURRENT DATE & TIME:\nToday is ${currentDate} (India Standard Time). (Aaj ki date aur samay: ${currentDate})\n`;
+        const dateContext = `\n[System Context - Current Date & Time: Today is ${currentDate} (India Standard Time).]\n`;
+
+        const isLegal = mode === 'LEGAL_TOOLKIT' || (systemInstruction && systemInstruction.includes('LEGAL_TOOLKIT'));
 
         let finalSystemContent = "";
         if (systemInstruction) {
-            finalSystemContent = systemInstruction + dateContext;
+            finalSystemContent = systemInstruction + (isLegal ? "" : dateContext);
         } else {
-            finalSystemContent = configService.getFullSystemInstruction() + dateContext + `
+            finalSystemContent = configService.getFullSystemInstruction() + (isLegal ? "" : dateContext) + `
 ### PERSONALIZATION:
 Understand the user's expertise level and topic preference implicitly from their messages. Adjust your language to be slightly more technical or simple as needed, while maintaining the primary goal of being direct and professional.
 `;
         }
 
         if (userName) {
-            finalSystemContent += `\n\n### USER IDENTIFICATION:\nThe user's name is ${userName}. You MUST use their name to address them directly and naturally in your responses (e.g., "Yes, Sakshi", or "Here is the information, ${userName}"). Make the conversation feel personalized by acknowledging their name.\n`;
+            finalSystemContent += `\n[System Context - User Identity: The user's name is ${userName}. Acknowledge or address them by name naturally if appropriate, without repeating this system context block in your response.]\n`;
         }
 
         messages.push({ role: 'system', content: finalSystemContent });
+
+        // Add history if provided
+        if (options.history && Array.isArray(options.history)) {
+            let lastRole = null;
+            options.history.forEach(h => {
+                const role = h.role === 'model' || h.role === 'assistant' ? 'assistant' : 'user';
+                if (role !== lastRole) {
+                    const text = Array.isArray(h.parts) ? h.parts[0]?.text : (h.content || h.text || "");
+                    if (text) {
+                        messages.push({ role, content: text });
+                        lastRole = role;
+                    }
+                }
+            });
+            if (lastRole === 'user') {
+                messages.pop();
+            }
+        }
         // 2. Add Context if provided
         let finalPrompt = prompt;
         if (context) {

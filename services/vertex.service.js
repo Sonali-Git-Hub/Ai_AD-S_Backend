@@ -292,7 +292,7 @@ export const detectRAGNeed = async (query) => {
         // 2. STRICT KEYWORD MATCHING: Only trigger RAG for AISA, AI MALL, UWO, and specific features
         const ragKeywords = ['aisa', 'ai mall', 'uwo', 'feature', 'pricing', 'plan', 'mall', 'refund', 'policy', 'capabilities'];
         const hasRagKeyword = ragKeywords.some(k => lower.includes(k));
-        
+
         if (hasRagKeyword) {
             logger.info(`[RAG-Detector] Keyword match triggered RAG for: "${query}"`);
             return true;
@@ -435,13 +435,13 @@ export const AskVertexRaw = async (prompt, options = {}) => {
         if (err.stack) logger.debug(`[AskVertexRaw] Stack Trace: ${err.stack}`);
 
         // Try OpenAI fallback if Vertex/Gemini authentication/init fails
-        const isAuthOrInitError = err.message.includes("authenticate") || 
-                                  err.message.includes("credential") || 
-                                  err.message.includes("GoogleAuth") ||
-                                  err.message.includes("not initialized") ||
-                                  err.message.includes("model initialized") ||
-                                  err.message.includes("API key") ||
-                                  err.message.includes("not available");
+        const isAuthOrInitError = err.message.includes("authenticate") ||
+            err.message.includes("credential") ||
+            err.message.includes("GoogleAuth") ||
+            err.message.includes("not initialized") ||
+            err.message.includes("model initialized") ||
+            err.message.includes("API key") ||
+            err.message.includes("not available");
 
         if (isAuthOrInitError && process.env.OPENAI_API_KEY) {
             logger.warn(`[AskVertexRaw] Vertex AI Auth/Init failed. Falling back to OpenAI (gpt-4o)...`);
@@ -476,18 +476,20 @@ export const askVertex = async (prompt, context = null, options = {}) => {
 
         // Inject Brand Identity if no specific instructions provided
         const currentDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
-        const dateContext = `\n### CURRENT DATE & TIME:\nToday is ${currentDate} (India Standard Time). (Aaj ki date aur samay: ${currentDate})\n`;
+        const dateContext = `\n[System Context - Current Date & Time: Today is ${currentDate} (India Standard Time).]\n`;
+
+        const isLegal = options.mode === 'LEGAL_TOOLKIT' || (systemInstruction && systemInstruction.includes('LEGAL_TOOLKIT'));
 
         if (!systemInstruction) {
-            systemInstruction = configService.getFullSystemInstruction() + dateContext;
+            systemInstruction = configService.getFullSystemInstruction() + (isLegal ? "" : dateContext);
         } else {
             // Append date context even to custom instructions for reference
-            systemInstruction = systemInstruction + dateContext;
+            systemInstruction = systemInstruction + (isLegal ? "" : dateContext);
         }
 
         // Add User Name context if provided
         if (options.userName) {
-            systemInstruction += `\n### USER IDENTIFICATION:\nThe user's name is ${options.userName}. You MUST use their name to address them directly and naturally in your responses (e.g., "Yes, Sakshi", or "Here is the information, ${options.userName}"). Make the conversation feel personalized by acknowledging their name.\n`;
+            systemInstruction += `\n[System Context - User Identity: The user's name is ${options.userName}. Acknowledge or address them by name naturally if appropriate, without repeating this system context block in your response.]\n`;
         }
 
         let finalPrompt = prompt;
@@ -509,7 +511,7 @@ export const askVertex = async (prompt, context = null, options = {}) => {
 
         const rawModelName = options.modelOverride || modelName;
         const selectedModelName = modelMap[rawModelName] || rawModelName;
-        
+
         if (selectedModelName && genAIInstance) {
             logger.info(`[VERTEX] Mapping: ${rawModelName} -> ${selectedModelName} (with System Instruction)`);
             model = genAIInstance.getGenerativeModel({
@@ -563,9 +565,28 @@ export const askVertex = async (prompt, context = null, options = {}) => {
         }
 
         // 3. Generate Content
+        let contents = [];
+        if (options.history && Array.isArray(options.history)) {
+            let lastRole = null;
+            options.history.forEach(h => {
+                const role = h.role === 'assistant' || h.role === 'model' ? 'model' : 'user';
+                if (role !== lastRole) {
+                    contents.push({
+                        role: role,
+                        parts: Array.isArray(h.parts) ? h.parts.map(p => typeof p === 'string' ? { text: p } : p) : [{ text: h.content || h.text || "" }]
+                    });
+                    lastRole = role;
+                }
+            });
+            if (lastRole === 'user') {
+                contents.pop();
+            }
+        }
+        contents.push({ role: 'user', parts });
+
         let result;
         try {
-            result = await model.generateContent({ contents: [{ role: 'user', parts }] });
+            result = await model.generateContent({ contents });
         } catch (execErr) {
             if ((execErr.message.includes("404") || execErr.message.includes("NOT_FOUND")) && selectedModelName !== 'gemini-2.5-flash') {
                 logger.warn(`[VERTEX] Execution failed for ${selectedModelName}. Retrying with gemini-2.5-flash.`);
@@ -574,7 +595,7 @@ export const askVertex = async (prompt, context = null, options = {}) => {
                     systemInstruction: systemInstruction,
                     generationConfig: { maxOutputTokens: 4096 }
                 });
-                result = await fallbackModel.generateContent({ contents: [{ role: 'user', parts }] });
+                result = await fallbackModel.generateContent({ contents });
             } else {
                 throw execErr;
             }
@@ -625,23 +646,24 @@ export const askVertex = async (prompt, context = null, options = {}) => {
         if (error.stack) logger.debug(`[VERTEX] Stack: ${error.stack}`);
 
         // Try OpenAI fallback if Vertex/Gemini authentication/init fails
-        const isAuthOrInitError = error.message.includes("authenticate") || 
-                                  error.message.includes("credential") || 
-                                  error.message.includes("GoogleAuth") ||
-                                  error.message.includes("not initialized") ||
-                                  error.message.includes("initialized") ||
-                                  error.message.includes("API key") ||
-                                  error.message.includes("not available");
+        const isAuthOrInitError = error.message.includes("authenticate") ||
+            error.message.includes("credential") ||
+            error.message.includes("GoogleAuth") ||
+            error.message.includes("not initialized") ||
+            error.message.includes("initialized") ||
+            error.message.includes("API key") ||
+            error.message.includes("not available");
 
         if (isAuthOrInitError && process.env.OPENAI_API_KEY) {
             logger.warn(`[VERTEX] Vertex AI Auth/Init failed. Falling back to OpenAI (gpt-4o)...`);
             try {
                 const openaiService = await import('./openai.service.js');
                 const response = await openaiService.askOpenAI(prompt, context, {
-                    systemInstruction: options.systemInstruction,
+                    systemInstruction: systemInstruction,
                     userName: options.userName,
+                    mode: options.mode || 'LEGAL_TOOLKIT',
                     image: options.images?.[0], // simple conversion if any
-                    jsonMode: options.isJson || (options.systemInstruction && options.systemInstruction.includes("JSON"))
+                    jsonMode: options.isJson || (systemInstruction && systemInstruction.includes("JSON"))
                 });
                 return response;
             } catch (openAiErr) {

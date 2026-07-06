@@ -2,6 +2,7 @@ import express from 'express';
 import Project from '../models/Project.js';
 import { verifyToken } from '../middleware/authorization.js';
 import * as legalIntelligenceService from '../Tools/AI_Legal/services/legalIntelligence.service.js';
+import { v4 as uuidv4 } from 'uuid';
 
 const router = express.Router();
 
@@ -10,44 +11,161 @@ const router = express.Router();
 // @access  Private
 router.post('/', verifyToken, async (req, res) => {
     try {
-        const { 
-            name, clientName, summary, keyIssue, importantDates, isLegalCase, 
-            caseType, accused, status, stage, priority, opponentName, lawyers, 
-            facts, legalIssues, reliefGoals, intelligence, tasks, communicationLogs, research, hearings
+        const {
+            name, clientName, clientRole, opponentName, opponentRole,
+            status, priority, caseType,
+            courtName, courtType, state, district, city,
+            filingDate, incidentDate, caseSummary
         } = req.body;
 
         if (!name) {
-            return res.status(400).json({ error: 'Project name is required' });
+            return res.status(400).json({ error: 'Project name (Case Title) is required' });
         }
+
+        const projectSummary = caseSummary || req.body.summary || '';
 
         const project = new Project({
             name,
             userId: req.user.id,
             clientName: clientName || '',
-            summary: summary || '',
-            caseType: caseType || '',
+            clientRole: clientRole || '',
+            opponentName: opponentName || '',
+            opponentRole: opponentRole || '',
             status: status || 'Active',
-            stage: stage || 'Pre-litigation',
-            priority: priority || 'Medium',
-            opponentName: opponentName || accused || '',
-            lawyers: lawyers || [],
-            facts: facts || [],
-            legalIssues: legalIssues || (keyIssue ? [keyIssue] : []),
-            reliefGoals: reliefGoals || '',
-            intelligence: intelligence || { strengthScore: 0, winProbability: 0, riskLevel: 'Medium' },
-            tasks: tasks || [],
-            communicationLogs: communicationLogs || [],
-            research: research || [],
-            isLegalCase: isLegalCase === undefined ? false : isLegalCase,
-            accused: accused || '',
-            keyIssue: keyIssue || '',
-            importantDates: importantDates || [],
-            hearings: hearings || [],
-            evidence: req.body.evidence || [],
-            savedPrecedents: req.body.savedPrecedents || []
+            stage: 'Pre-litigation',
+            priority: priority || 'Standard',
+            caseType: caseType || '',
+            courtName: courtName || '',
+            courtType: courtType || '',
+            state: state || '',
+            district: district || '',
+            city: city || '',
+            filingDate: filingDate || null,
+            incidentDate: incidentDate || null,
+            caseSummary: projectSummary,
+            summary: projectSummary,
+            
+            // Auto-Generated Metadata
+            internalCaseId: "CASE-" + Math.floor(100000 + Math.random() * 900000),
+            uuid: uuidv4(),
+            createdDate: new Date(),
+            lastUpdated: new Date(),
+            createdBy: req.user.id,
+            advocateId: req.user.id,
+            activityLog: [{ 
+                action: 'Case Created', 
+                timestamp: new Date(), 
+                details: 'Case initialized via simplified lawyer case intelligence form.' 
+            }],
+            evidenceCount: 0,
+            searchIndex: `${name} ${clientName} ${opponentName || ''}`.toLowerCase(),
+            isLegalCase: true
         });
 
         await project.save();
+
+        // Trigger background AI summary and timeline extraction if caseSummary/summary is present
+        if (projectSummary && projectSummary.trim()) {
+            const runBackgroundAnalysis = async () => {
+                try {
+                    console.log(`[Background-Analysis] Starting AI analysis for project: ${project._id}`);
+                    const aiResponse = await legalIntelligenceService.analyzeCaseDetails(projectSummary, project, 'English');
+                    const aiData = typeof aiResponse === "string" ? JSON.parse(aiResponse) : aiResponse;
+
+                    const toStr = (val, fallback = '') => {
+                        if (!val) return fallback;
+                        if (typeof val === 'string') return val;
+                        return JSON.stringify(val);
+                    };
+
+                    const toDate = (val) => {
+                        if (!val) return null;
+                        const d = new Date(val);
+                        return isNaN(d.getTime()) ? null : d;
+                    };
+
+                    const normalized = {
+                        summary: toStr(aiData.executive_summary || aiData.summary),
+                        strength: aiData.case_strength ?? aiData.strengthScore ?? aiData.strength ?? 0,
+                        probability: aiData.win_probability ?? aiData.winProbability ?? aiData.probability ?? 0,
+                        timeline: Array.isArray(aiData.timeline) ? aiData.timeline : [],
+                        evidence: Array.isArray(aiData.evidence) ? aiData.evidence : [],
+                        research: Array.isArray(aiData.legal_research || aiData.research) ? (aiData.legal_research || aiData.research) : [],
+                        steps: Array.isArray(aiData.process_steps || aiData.steps) ? (aiData.process_steps || aiData.steps) : [],
+                        risk: aiData.risk_assessment || aiData.risk || {},
+                        vulnerabilities: Array.isArray(aiData.critical_vulnerabilities || aiData.weakPoints) ? (aiData.critical_vulnerabilities || aiData.weakPoints) : [],
+                        opponent: Array.isArray(aiData.opponent_strategy || aiData.opponentStrategies) ? (aiData.opponent_strategy || aiData.opponent_strategies) : [],
+                        relief: toStr(aiData.primary_relief || aiData.reliefGoals),
+                        strategy: Array.isArray(aiData.strategy_recommendation || aiData.strategyRecommendations) ? (aiData.strategy_recommendation || aiData.strategyRecommendations) : []
+                    };
+
+                    const updatedFields = {
+                        summary: normalized.summary || project.summary,
+                        aiSummary: normalized.summary || '',
+                        reliefGoals: normalized.relief || project.reliefGoals,
+                        intelligence: {
+                            strengthScore: Number(normalized.strength) || 0,
+                            winProbability: Number(normalized.probability) || 0,
+                            riskLevel: ['Low', 'Medium', 'High', 'Critical'].includes(normalized.risk?.level) ? normalized.risk.level : 'Medium',
+                            weakPoints: [...(normalized.vulnerabilities || []), normalized.risk?.reason].filter(Boolean).map(v => toStr(v)),
+                            opponentStrategies: normalized.opponent.map(s => toStr(s)),
+                            strategyRecommendations: normalized.strategy.map(s => toStr(s)),
+                            missingEvidence: []
+                        },
+                        facts: normalized.timeline
+                            .filter(f => f && (f.event || f.title))
+                            .map(f => ({
+                                date: toDate(f.date),
+                                event: toStr(f.event || f.title),
+                                description: toStr(f.description || f.event || f.title)
+                            })),
+                        legalIssues: normalized.research.map(r => toStr(r.law || r.lawName)).filter(Boolean),
+                        tasks: normalized.steps
+                            .filter(p => p && (p.step || p.title))
+                            .map(p => ({
+                                title: toStr(p.step || p.title),
+                                status: 'Pending',
+                                priority: toStr(p.priority) || 'Medium'
+                            })),
+                        evidence: normalized.evidence
+                            .filter(e => e && (e.title || e.name || e.description))
+                            .map(e => ({
+                                name: toStr(e.title || e.name || e.description),
+                                type: toStr(e.type) || 'Document',
+                                status: toStr(e.strength) || 'Moderate',
+                                uploadDate: new Date()
+                            })),
+                        research: normalized.research
+                            .filter(r => r && (r.law || r.lawName))
+                            .map(r => ({
+                                lawName: toStr(r.law || r.lawName),
+                                section: toStr(r.section),
+                                description: toStr(r.description)
+                            }))
+                    };
+
+                    updatedFields.evidenceCount = updatedFields.evidence.length;
+                    updatedFields.searchIndex = `${project.name} ${project.clientName} ${project.opponentName || ''} ${updatedFields.summary || ''}`.toLowerCase();
+                    updatedFields.lastUpdated = new Date();
+
+                    await Project.findByIdAndUpdate(project._id, {
+                        $set: updatedFields,
+                        $push: {
+                            activityLog: {
+                                action: 'Background Analysis Completed',
+                                timestamp: new Date(),
+                                details: 'AI Summary, Timeline, and initial Intelligence generated in background.'
+                            }
+                        }
+                    });
+                    console.log(`[Background-Analysis] Successfully processed and updated project: ${project._id}`);
+                } catch (bgErr) {
+                    console.error(`[Background-Analysis] Error analyzing project: ${project._id}`, bgErr);
+                }
+            };
+            runBackgroundAnalysis();
+        }
+
         res.status(201).json(project);
     } catch (error) {
         console.error('Error creating project:', error);
@@ -91,7 +209,7 @@ router.get('/:id', verifyToken, async (req, res) => {
 router.put('/:id', verifyToken, async (req, res) => {
     try {
         const updateData = req.body;
-        
+
         // Ensure userId cannot be changed via update
         delete updateData.userId;
         delete updateData._id;
@@ -113,16 +231,24 @@ router.put('/:id', verifyToken, async (req, res) => {
 // Shared analysis handler to keep code DRY and consistent
 const performCaseAnalysis = async (req, res) => {
     try {
-        const { rawText } = req.body;
+        const { rawText, language } = req.body;
         const project = await Project.findOne({ _id: req.params.id, userId: req.user.id });
-        
+
         if (!project) {
             return res.status(404).json({ error: 'Case not found' });
         }
 
-        const inputText = rawText || project.summary || project.name;
-        const aiResponse = await legalIntelligenceService.analyzeCaseDetails(inputText, project);
-        
+        let inputText = rawText || '';
+        if (!inputText ||
+            inputText.includes("__AI_ANALYSIS_FAILED__") ||
+            inputText.includes("AI Analysis Error") ||
+            inputText.includes("AI Request Failed") ||
+            inputText.includes("could not process the request")) {
+            inputText = project.description || project.name;
+        }
+
+        const aiResponse = await legalIntelligenceService.analyzeCaseDetails(inputText, project, language);
+
         const aiData = typeof aiResponse === "string" ? JSON.parse(aiResponse) : aiResponse;
 
         // Sanitization helpers
