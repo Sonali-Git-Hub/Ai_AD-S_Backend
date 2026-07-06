@@ -157,19 +157,11 @@ export const verifyAppleStoreSubscription = async (req, res) => {
                     return timeB - timeA;
                 });
 
-                // Find item matching requested productId if provided, otherwise pick transactions[0]
-                let activeItem = null;
-                if (productId) {
-                    activeItem = transactions.find(t => t.product_id === productId);
-                    if (activeItem) {
-                        console.log(`[AppleStore IAP] Found transaction matching requested productId: ${productId}`);
-                    }
-                }
-                
-                if (!activeItem) {
-                    activeItem = transactions[0];
-                    console.log(`[AppleStore IAP] Defaulting to latest transaction in receipt: ${activeItem.product_id}`);
-                }
+                // ALWAYS pick the latest subscription transaction in the receipt.
+                // This ensures we register the most recent upgrade/downgrade even if the client
+                // sent a stale or previous productId during background sync or transaction updates.
+                let activeItem = transactions[0];
+                console.log(`[AppleStore IAP] Selected latest transaction in receipt: ${activeItem.product_id} (Client requested: ${productId})`);
 
                 resolvedProductId = activeItem.product_id;
                 resolvedTransactionId = activeItem.transaction_id;
@@ -248,6 +240,38 @@ export const verifyAppleStoreSubscription = async (req, res) => {
             return res.status(404).json({ success: false, message: 'User not found.' });
         }
 
+        // Prevent downgrades from stale/older transaction replays in the background queue
+        if (resolvedTransactionId) {
+            const existingTx = await Subscription.findOne({ transactionId: resolvedTransactionId });
+            if (existingTx) {
+                console.log(`[AppleStore IAP] Transaction ${resolvedTransactionId} already processed. Status: ${existingTx.subscriptionStatus}`);
+                
+                // If this transaction already exists, check if the user has another active subscription that is newer
+                const existingActiveSub = await Subscription.findOne({ 
+                    userId, 
+                    subscriptionStatus: { $in: ['active', 'grace_period'] },
+                    transactionId: { $ne: resolvedTransactionId }
+                });
+
+                if (existingActiveSub) {
+                    const existingRenewal = new Date(existingActiveSub.renewalDate).getTime();
+                    const incomingExpiry = new Date(resolvedExpiresDate).getTime();
+                    
+                    if (incomingExpiry < existingRenewal) {
+                        console.log(`[AppleStore IAP] Ignored older replayed transaction for user ${userId}. Incoming expiry: ${resolvedExpiresDate}, Current renewal: ${existingActiveSub.renewalDate}`);
+                        const activePlan = await Plan.findById(existingActiveSub.planId);
+                        return res.status(200).json({
+                            success: true,
+                            alreadyProcessed: true,
+                            subscription: existingActiveSub,
+                            planKey: activePlan?.planId || 'Plan_0',
+                            message: '✅ Ignored older transaction replay.'
+                        });
+                    }
+                }
+            }
+        }
+
         // Disable existing active subscriptions for this user
         await Subscription.updateMany(
             { userId, subscriptionStatus: { $in: ['active', 'grace_period'] } },
@@ -256,9 +280,10 @@ export const verifyAppleStoreSubscription = async (req, res) => {
 
         // Create or update subscription entry based on originalTransactionId
         const updatedSubscription = await Subscription.findOneAndUpdate(
-            { userId, originalTransactionId: resolvedOriginalOriginalTransactionIdOrFallback(resolvedOriginalTransactionId, resolvedTransactionId) },
+            { originalTransactionId: resolvedOriginalOriginalTransactionIdOrFallback(resolvedOriginalTransactionId, resolvedTransactionId) },
             {
                 $set: {
+                    userId,
                     planId: plan._id,
                     creditsRemaining: 0,
                     billingCycle,

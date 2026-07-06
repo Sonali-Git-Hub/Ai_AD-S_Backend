@@ -1,4 +1,9 @@
 import mongoose from 'mongoose';
+import dns from 'dns';
+
+try {
+    dns.setServers(['8.8.8.8', '1.1.1.1']);
+} catch (e) {}
 
 const mongoUri = 'mongodb+srv://admin_db_user:gwmmWiKmK4wCit1L@cluster0.u5wdauj.mongodb.net/AISA?appName=Cluster0';
 
