@@ -468,11 +468,11 @@ export const AskVertexRaw = async (prompt, options = {}) => {
 };
 
 export const askVertex = async (prompt, context = null, options = {}) => {
+    let { systemInstruction, images, documents } = options;
     try {
         if (!generativeModel && !genAIInstance && !vertexAI) {
             throw new Error('Google AI services are not initialized: GCP_PROJECT_ID is missing, commented out, or unavailable in the environment configuration.');
         }
-        let { systemInstruction, images, documents } = options;
 
         // Inject Brand Identity if no specific instructions provided
         const currentDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });
