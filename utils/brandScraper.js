@@ -190,20 +190,36 @@ const extractColorsFromLogo = async (logoUrl) => {
  * Priority: og:logo > structured-data > apple-touch-icon > rel=icon SVG/PNG > img[logo] > favicon.ico
  */
 const findBestLogoUrl = ($, baseUrl) => {
-  // 1. Semantic & Standard Meta signal (High confidence)
-  const metaSelectors = [
+  // 1. JSON-LD structured data (Schema.org Organization / Brand)
+  let jsonLdLogo = null;
+  $('script[type="application/ld+json"]').each((_, el) => {
+    if (jsonLdLogo) return;
+    try {
+      const data = JSON.parse($(el).html() || '{}');
+      const arr = Array.isArray(data) ? data : [data];
+      for (const item of arr) {
+        const type = item?.['@type']?.toLowerCase?.() || '';
+        if ((type.includes('organization') || type.includes('brand') || type.includes('website')) && item.logo) {
+          jsonLdLogo = typeof item.logo === 'string' ? item.logo : item.logo?.url || item.logo?.contentUrl;
+          if (jsonLdLogo) break;
+        }
+      }
+    } catch { }
+  });
+  if (jsonLdLogo) return resolveToAbsolute(jsonLdLogo, baseUrl);
+
+  // 2. High-confidence meta / link tags (Explicit logo or apple-touch-icon)
+  const highPrioSelectors = [
     'meta[property="og:logo"]',
     'meta[name="twitter:logo"]',
-    'meta[property="og:image"]', // Use social image as logo fallback
-    'meta[name="twitter:image"]'
+    'link[rel="apple-touch-icon"]'
   ];
-
-  for (const s of metaSelectors) {
-     const found = $(s).attr('content');
+  for (const s of highPrioSelectors) {
+     const found = $(s).attr('content') || $(s).attr('href');
      if (found) return resolveToAbsolute(found, baseUrl);
   }
 
-  // 2. Look for explicit "logo" images in common containers (Very high confidence)
+  // 3. Look for explicit logo images in common navigation/header containers (Very high confidence)
   const logoSelectors = [
     'a[class*="logo"] img',
     'a[id*="logo"] img',
@@ -215,7 +231,9 @@ const findBestLogoUrl = ($, baseUrl) => {
     'img[class*="logo" i]',
     'img[id*="logo" i]',
     'img[class*="brand" i]',
-    'img[alt*="logo" i]'
+    'img[alt*="logo" i]',
+    'img[src*="logo" i]',
+    'img[src*="brand" i]'
   ];
 
   for (const s of logoSelectors) {
@@ -223,7 +241,7 @@ const findBestLogoUrl = ($, baseUrl) => {
     if (found) return resolveToAbsolute(found, baseUrl);
   }
 
-  // 3. Structural fallback: First image in header or nav (Medium confidence)
+  // 4. Structural fallback: First image in header or nav (Medium confidence)
   const structuralLogo = 
     $('header img').first().attr('src') || 
     $('nav img').first().attr('src') ||
@@ -232,47 +250,45 @@ const findBestLogoUrl = ($, baseUrl) => {
 
   if (structuralLogo) return resolveToAbsolute(structuralLogo, baseUrl);
 
-  // 4. JSON-LD structured data (Schema.org Organization)
-  let jsonLdLogo = null;
-  $('script[type="application/ld+json"]').each((_, el) => {
-    if (jsonLdLogo) return;
-    try {
-      const data = JSON.parse($(el).html() || '{}');
-      const arr = Array.isArray(data) ? data : [data];
-      for (const item of arr) {
-        const type = item?.['@type']?.toLowerCase?.() || '';
-        if ((type.includes('organization') || type.includes('brand')) && item.logo) {
-          jsonLdLogo = typeof item.logo === 'string' ? item.logo : item.logo?.url || item.logo?.contentUrl;
-          if (jsonLdLogo) break;
-        }
-      }
-    } catch { }
-  });
-  if (jsonLdLogo) return resolveToAbsolute(jsonLdLogo, baseUrl);
-
-  // 6. Generic image search for "logo" or "brand" in filename (Last resort img tags)
+  // 5. Generic image search for "logo" or "brand" in filename/alt/class
   const allImgs = $('img').get();
   for (const img of allImgs) {
     const src = $(img).attr('src');
     const alt = $(img).attr('alt') || '';
     const cls = $(img).attr('class') || '';
-    if (src && (src.toLowerCase().includes('logo') || alt.toLowerCase().includes('logo') || cls.toLowerCase().includes('logo'))) {
+    if (src && (
+      src.toLowerCase().includes('logo') || 
+      alt.toLowerCase().includes('logo') || 
+      cls.toLowerCase().includes('logo') ||
+      src.toLowerCase().includes('brand') ||
+      alt.toLowerCase().includes('brand') ||
+      cls.toLowerCase().includes('brand')
+    )) {
       return resolveToAbsolute(src, baseUrl);
     }
   }
 
-  // 7. Favicons & Apple Touch Icons
-  const lowPrioSelectors = [
-    'link[rel="apple-touch-icon"]',
+  // 6. High resolution icons / SVGs
+  const iconSelectors = [
     'link[rel="icon"][sizes="192x192"]',
     'link[rel="icon"][sizes="144x144"]',
     'link[rel="icon"][type*="svg"]',
-    'link[rel*="icon"]'
+    'link[rel="shortcut icon"]',
+    'link[rel="icon"]'
   ];
-
-  for (const s of lowPrioSelectors) {
+  for (const s of iconSelectors) {
     const found = $(s).attr('href');
     if (found) return resolveToAbsolute(found, baseUrl);
+  }
+
+  // 7. Social images as low-confidence fallback (usually banner images, so low priority)
+  const socialMeta = [
+    'meta[property="og:image"]',
+    'meta[name="twitter:image"]'
+  ];
+  for (const s of socialMeta) {
+     const found = $(s).attr('content');
+     if (found) return resolveToAbsolute(found, baseUrl);
   }
 
   console.warn(`[Scraper] No logo found for ${baseUrl}, falling back to favicon.ico`);
