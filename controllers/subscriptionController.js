@@ -2,9 +2,11 @@ import Subscription from '../models/Subscription.js';
 import Plan from '../models/Plan.js';
 import User from '../models/User.js';
 import UserQuota from '../models/UserQuota.js';
+import Invoice from '../models/Invoice.js';
 import { getUserPlan, getOrCreateUserQuota } from '../services/subscriptionService.js';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
+import { createInvoice } from '../services/invoiceService.js';
 
 // Initialize Razorpay
 const razorpay = new Razorpay({
@@ -113,7 +115,15 @@ export const createOrder = async (req, res) => {
         if (planId) {
             const plan = await Plan.findById(planId);
             if (!plan) return res.status(404).json({ success: false, message: 'Plan not found' });
-            amount = billingCycle === 'yearly' ? plan.priceYearly : plan.priceMonthly;
+            const basePrice = billingCycle === 'yearly' ? plan.priceYearly : plan.priceMonthly;
+            
+            if (plan.isGstInclusive) {
+                amount = basePrice;
+            } else {
+                amount = Math.round(basePrice * 1.18 * 100) / 100;
+            }
+            
+            console.log(`[createOrder] Plan: ${plan.planName} | Base: ${basePrice} | Is GST Inclusive: ${plan.isGstInclusive || false} | Calculated amount (with GST if excl): ${amount}`);
         } else {
             return res.status(400).json({ success: false, message: 'Invalid request' });
         }
@@ -123,7 +133,7 @@ export const createOrder = async (req, res) => {
         }
 
         const options = {
-            amount: amount * 100, // INR in paise
+            amount: Math.round(amount * 100), // INR in paise (integer)
             currency: 'INR',
             receipt: `order_rcptid_${Date.now()}`
         };
@@ -145,11 +155,65 @@ export const createOrder = async (req, res) => {
  */
 export const purchasePlan = async (req, res) => {
     try {
-        const { planId, billingCycle } = req.body;
+        const { planId, billingCycle, paymentId, billingDetails } = req.body;
         const userId = req.user.id || req.user._id;
 
         const plan = await Plan.findById(planId);
         if (!plan) return res.status(404).json({ success: false, message: 'Plan not found' });
+
+        // 1. Prevent duplicate invoices & subscriptions for the same payment
+        if (paymentId && !paymentId.startsWith('mock_')) {
+            const existingInvoice = await Invoice.findOne({ paymentId });
+            if (existingInvoice) {
+                console.log(`[purchasePlan] Payment ID ${paymentId} has already been processed. Skipping subscription creation.`);
+                const sub = await Subscription.findById(existingInvoice.subscriptionId);
+                return res.status(200).json({
+                    success: true,
+                    subscription: sub,
+                    message: 'Plan upgraded successfully (already processed).',
+                    planKey: plan.planId || 'Plan_0',
+                });
+            }
+        }
+
+        // 2. Verify payment on the backend with Razorpay (if live credentials are configured)
+        if (paymentId && !paymentId.startsWith('mock_') && process.env.RAZORPAY_KEY_SECRET && process.env.RAZORPAY_KEY_SECRET !== 'dummy_secret') {
+            try {
+                const payment = await razorpay.payments.fetch(paymentId);
+                const basePrice = billingCycle === 'yearly' ? plan.priceYearly : plan.priceMonthly;
+                let expectedTotal;
+                if (plan.isGstInclusive) {
+                    expectedTotal = basePrice;
+                } else {
+                    expectedTotal = Math.round(basePrice * 1.18 * 100) / 100;
+                }
+                const expectedPaise = Math.round(expectedTotal * 100);
+
+                if (payment.status !== 'captured' && payment.status !== 'authorized') {
+                    console.error(`[Razorpay Verification] payment status is ${payment.status}, expected captured or authorized`);
+                    return res.status(400).json({
+                        success: false,
+                        message: `Payment verification failed. Payment status is ${payment.status}`
+                    });
+                }
+
+                // Check amount matching (with small rounding tolerance of 1 INR = 100 paise)
+                if (Math.abs(payment.amount - expectedPaise) > 100) {
+                    console.error(`[Razorpay Verification] amount mismatch: expected ${expectedPaise} paise, got ${payment.amount} paise`);
+                    return res.status(400).json({
+                        success: false,
+                        message: `Payment verification failed. Amount mismatch.`
+                    });
+                }
+                console.log(`[Razorpay] Successfully verified payment ${paymentId} on backend.`);
+            } catch (err) {
+                console.error("[Razorpay Verification Error]", err.message);
+                return res.status(400).json({
+                    success: false,
+                    message: `Failed to verify payment with Razorpay: ${err.message}`
+                });
+            }
+        }
 
         const user = await User.findById(userId);
 
@@ -184,8 +248,16 @@ export const purchasePlan = async (req, res) => {
             subscriptionStart: new Date(),
             renewalDate,
             subscriptionStatus: 'active',
-            paymentId: 'mock_payment_id_for_now'
+            paymentId: paymentId || 'mock_payment_id_for_now'
         });
+
+        // Trigger GST Invoicing & Confirmation Emails
+        let generatedInvoice = null;
+        try {
+            generatedInvoice = await createInvoice(newSubscription._id, billingDetails);
+        } catch (invoiceErr) {
+            console.error('[INVOICE TRIGGER FAILED]', invoiceErr.message);
+        }
 
         // Reset quota usage on plan upgrade (daily counters reset; chat counter preserved for upgrade tracking)
         await UserQuota.findOneAndUpdate(

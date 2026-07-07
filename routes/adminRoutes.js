@@ -20,6 +20,7 @@ import {
     getChatSessionDetail
 } from '../controllers/adminChatSessionController.js';
 import { getAnalytics, getErrorDrillDown } from '../controllers/analyticsController.js';
+import { getAdminBillingStats, getAdminInvoices } from '../controllers/adminBillingController.js';
 
 
 const router = express.Router();
@@ -83,5 +84,9 @@ router.get('/chat-sessions/:sessionId', verifyToken, isAdmin, getChatSessionDeta
 // Analytics
 router.get('/analytics', verifyToken, isAdmin, getAnalytics);
 router.get('/analytics/errors/:mode', verifyToken, isAdmin, getErrorDrillDown);
+
+// Billing Management
+router.get('/billing/stats', verifyToken, isAdmin, getAdminBillingStats);
+router.get('/billing/invoices', verifyToken, isAdmin, getAdminInvoices);
 
 export default router;

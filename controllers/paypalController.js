@@ -19,6 +19,8 @@ import Subscription from '../models/Subscription.js';
 import Plan from '../models/Plan.js';
 import User from '../models/User.js';
 import UserQuota from '../models/UserQuota.js';
+import Invoice from '../models/Invoice.js';
+import { createInvoice } from '../services/invoiceService.js';
 
 // ─── PayPal API Base URL ──────────────────────────────────────────────────────
 const getPayPalBaseURL = () => process.env.PAYPAL_MODE === 'sandbox'
@@ -71,7 +73,13 @@ export const createPaypalOrder = async (req, res) => {
         }
 
         // Get amount in INR (same as Razorpay)
-        const amountINR = billingCycle === 'yearly' ? plan.priceYearly : plan.priceMonthly;
+        const baseAmountINR = billingCycle === 'yearly' ? plan.priceYearly : plan.priceMonthly;
+        let amountINR;
+        if (plan.isGstInclusive) {
+            amountINR = baseAmountINR;
+        } else {
+            amountINR = Math.round(baseAmountINR * 1.18 * 100) / 100;
+        }
 
         // Free plan: no payment needed
         if (amountINR === 0) {
@@ -150,11 +158,28 @@ export const createPaypalOrder = async (req, res) => {
  */
 export const capturePaypalOrder = async (req, res) => {
     try {
-        const { orderID, planId, billingCycle } = req.body;
+        const { orderID, planId, billingCycle, billingDetails } = req.body;
         const userId = req.user.id || req.user._id;
 
         if (!orderID || !planId) {
             return res.status(400).json({ success: false, message: 'orderID and planId are required' });
+        }
+
+        // 1. Prevent duplicate invoices & subscriptions for the same payment
+        const existingInvoice = await Invoice.findOne({ 
+            $or: [
+                { paymentId: orderID }
+            ] 
+        });
+        if (existingInvoice) {
+            console.log(`[capturePaypalOrder] Order ID ${orderID} has already been processed. Skipping.`);
+            const sub = await Subscription.findById(existingInvoice.subscriptionId);
+            return res.status(200).json({
+                success: true,
+                subscription: sub,
+                message: 'Plan upgraded successfully (already processed).',
+                planKey: planId,
+            });
         }
 
         const BASE_URL = getPayPalBaseURL();
@@ -229,6 +254,14 @@ export const capturePaypalOrder = async (req, res) => {
             subscriptionStatus: 'active',
             paymentId: paypalPaymentId,
         });
+
+        // Trigger GST Invoicing & Confirmation Emails
+        let generatedInvoice = null;
+        try {
+            generatedInvoice = await createInvoice(newSubscription._id, billingDetails);
+        } catch (invoiceErr) {
+            console.error('[INVOICE TRIGGER FAILED]', invoiceErr.message);
+        }
 
         // Reset quota usage on plan upgrade
         await UserQuota.findOneAndUpdate(

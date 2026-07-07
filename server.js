@@ -14,6 +14,7 @@ import cookieParser from "cookie-parser";
 import emailVerification from "./routes/emailVerification.js"
 import userRoute from './routes/user.js'
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { initSocket } from './utils/socket.js';
 import * as stockService from './services/stockService.js';
@@ -42,6 +43,7 @@ import subscriptionRoutes from './routes/subscriptionRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
 import dataRoutes from './routes/dataRoutes.js';
 import magicEditRoutes from './routes/magicEdit.routes.js';
+import invoiceDashboardRoutes from './routes/invoiceDashboardRoutes.js';
 import legalRoutes from './Tools/AI_Legal/routes/legalPages.routes.js';
 import intentRoutes from './routes/intentRoutes.js';
 import aiAdAgentRoutes from './routes/aiAdAgent.routes.js';
@@ -129,7 +131,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 // ─── Apple Pay Domain Verification ───────────────────────────────────────────
 // Apple's servers verify your domain by accessing this exact URL
 // File must be placed at: Aisa_backend_beta/public/.well-known/apple-developer-merchantid-domain-association
-import fs from 'fs';
 const serveAppleVerification = (req, res) => {
   let filePath = path.join(__dirname, 'public', '.well-known', 'apple-developer-merchantid-domain-association');
   if (!fs.existsSync(filePath)) {
@@ -217,6 +218,7 @@ app.use('/api/users', userRoute); // Aliased users routes to same user controlle
 
 // Admin Panel (Admin only)
 app.use('/api/admin', adminRoutes);
+app.use('/admin/invoices-dashboard', invoiceDashboardRoutes);
 
 // Projects
 app.use('/api/projects', projectRoutes);
@@ -256,6 +258,17 @@ app.use((err, req, res, next) => {
   console.error("[SERVER ERROR]", err.stack);
   res.status(500).json({ error: 'Internal Server Error' });
 });
+
+// Ensure public/invoices exists
+try {
+  const invoicesDir = path.join(__dirname, 'public', 'invoices');
+  if (!fs.existsSync(invoicesDir)) {
+    fs.mkdirSync(invoicesDir, { recursive: true });
+    console.log("✅ Created public/invoices directory for PDF storage.");
+  }
+} catch (e) {
+  console.error("❌ Failed to create public/invoices directory:", e.message);
+}
 
 // Start listening
 const server = app.listen(PORT, () => {
