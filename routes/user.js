@@ -13,6 +13,13 @@ import { uploadToCloudinary } from "../services/cloudinary.service.js";
 import FriendRequest from "../models/FriendRequest.js";
 import SupportTicket from "../models/SupportTicket.js";
 import ChatSession from "../models/ChatSession.js";
+import SocialAgentWorkspace from "../models/SocialAgentWorkspace.js";
+import BrandProfile from "../models/BrandProfile.js";
+import ContentCalendar from "../models/ContentCalendar.js";
+import CalendarEntry from "../models/CalendarEntry.js";
+import GeneratedAsset from "../models/GeneratedAsset.js";
+import PlanUsage from "../models/PlanUsage.js";
+import UploadAsset from "../models/UploadAsset.js";
 
 const route = express.Router()
 
@@ -658,6 +665,24 @@ route.delete("/", verifyToken, async (req, res) => {
         // 4. Delete subscription
         const subResult = await Subscription.deleteMany({ userId });
         console.log(`[DELETE ACCOUNT] Deleted ${subResult.deletedCount} subscriptions`);
+
+        // 4.5. Delete Social Agent Workspaces and related data
+        try {
+            const workspaces = await SocialAgentWorkspace.find({ userId });
+            const workspaceIds = workspaces.map(w => w._id);
+            if (workspaceIds.length > 0) {
+                await BrandProfile.deleteMany({ workspaceId: { $in: workspaceIds } });
+                await ContentCalendar.deleteMany({ workspaceId: { $in: workspaceIds } });
+                await CalendarEntry.deleteMany({ workspaceId: { $in: workspaceIds } });
+                await GeneratedAsset.deleteMany({ workspaceId: { $in: workspaceIds } });
+                await PlanUsage.deleteMany({ workspaceId: { $in: workspaceIds } });
+                await UploadAsset.deleteMany({ workspaceId: { $in: workspaceIds } });
+                const wsResult = await SocialAgentWorkspace.deleteMany({ userId });
+                console.log(`[DELETE ACCOUNT] Deleted ${wsResult.deletedCount} Social Agent Workspaces and related data`);
+            }
+        } catch (err) {
+            console.error(`[DELETE ACCOUNT] Error deleting social agent data:`, err.message);
+        }
 
         // 5. Finally delete the user account
         await userModel.findByIdAndDelete(userId);
