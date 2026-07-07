@@ -47,11 +47,24 @@ const generateInvoicePdfBuffer = async (invoice, plan, subscription) => {
                  <div class="row"><div>SGST (9%):</div><div>₹${invoice.sgst.toFixed(2)}</div></div>`
               : `<div class="row"><div>GST (0% - Exempt):</div><div>₹0.00</div></div>`;
 
-        const addressHtml = `
-            <div>${invoice.billingDetails.addressLine1 || ''}</div>
-            <div>${invoice.billingDetails.city || ''}, ${invoice.billingDetails.state || ''} - ${invoice.billingDetails.postalCode || ''}</div>
-            <div>${invoice.billingDetails.country || 'IN'}</div>
-        `;
+        let addressLines = [];
+        if (invoice.billingDetails.addressLine1) {
+            addressLines.push(invoice.billingDetails.addressLine1);
+        }
+        let cityStateZip = '';
+        if (invoice.billingDetails.city) cityStateZip += invoice.billingDetails.city;
+        if (invoice.billingDetails.state) {
+            cityStateZip += (cityStateZip ? ', ' : '') + invoice.billingDetails.state;
+        }
+        if (invoice.billingDetails.postalCode) {
+            cityStateZip += (cityStateZip ? ' - ' : '') + invoice.billingDetails.postalCode;
+        }
+        if (cityStateZip) {
+            addressLines.push(cityStateZip);
+        }
+        addressLines.push(invoice.billingDetails.country || 'IN');
+
+        const addressHtml = addressLines.map(line => `<div>${line}</div>`).join('');
 
         const htmlContent = `
         <!DOCTYPE html>

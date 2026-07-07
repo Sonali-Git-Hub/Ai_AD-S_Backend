@@ -31,7 +31,7 @@ const planSchema = new mongoose.Schema({
     features: [{ type: String }],
     badge: { type: String, default: "" },
     isPopular: { type: Boolean, default: false },
-    isGstInclusive: { type: Boolean, default: true },
+    isGstInclusive: { type: Boolean, default: false },
     isActive: { type: Boolean, default: true }
 }, { timestamps: true });
 
