@@ -372,47 +372,28 @@ io.on('connection', (socket) => {
             return socket.emit('historical_data_response', { historical });
         }
 
-        // 2. Check user's credit balance
-        const User = (await import('./models/User.js')).default;
-        const user = await User.findById(userId);
-        if (!user) {
-            return socket.emit('historical_data_response', { error: 'User not found' });
-        }
-
-        const cost = 5; // Historical Chart cost is 5 credits
-        if (user.credits < cost) {
+        // 2. Check user's plan quota
+        const { checkQuota } = await import('./services/subscriptionService.js');
+        const quotaCheck = await checkQuota(userId, 'cashflow');
+        if (!quotaCheck.allowed) {
             return socket.emit('historical_data_response', {
-                error: 'Insufficient credits',
-                code: 'OUT_OF_CREDITS',
-                required: cost,
-                available: user.credits
+                error: quotaCheck.reason,
+                code: quotaCheck.code || 'PLAN_RESTRICTED',
+                planKey: quotaCheck.planKey
             });
         }
 
-        // 3. Fetch data first to make sure it succeeds before charging
+        // 3. Fetch data first
         const historical = await stockService.getHistorical(symbol);
 
-        // 4. Deduct credits and log
-        user.credits -= cost;
-        await user.save();
-
-        const CreditLog = (await import('./models/CreditLog.js')).default;
-        await CreditLog.create({
-            userId: user._id,
-            action: 'ai_cashflow',
-            description: 'AISA CashFlow Explorer (Historical Tab Access)',
-            credits: -cost,
-            balanceAfter: user.credits
-        });
-
-        // 5. Save unlock record
+        // 4. Save unlock record
         await UnlockedStockTab.findOneAndUpdate(
             { userId, symbol: uppercaseSymbol, tab: tabName },
             { createdAt: new Date() },
             { upsert: true, new: true }
         );
 
-        console.log(`[Socket] Deducted ${cost} credits and marked tab '${tabName}' unlocked for stock ${uppercaseSymbol} (User: ${userId})`);
+        console.log(`[Socket] Marked tab '${tabName}' unlocked for stock ${uppercaseSymbol} under quota verification (User: ${userId})`);
         socket.emit('historical_data_response', { historical });
     } catch (error) {
         console.error(`[Socket] request_historical error:`, error.message);
