@@ -22,7 +22,6 @@ import * as stockService from './services/stockService.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-import fs from 'fs';
 const logFile = fs.createWriteStream(path.join(__dirname, 'server_output.log'), { flags: 'a' });
 const originalLog = console.log;
 const originalError = console.error;
