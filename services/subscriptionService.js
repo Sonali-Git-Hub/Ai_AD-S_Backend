@@ -6,10 +6,10 @@ import Plan from '../models/Plan.js';
 // ── PLAN QUOTA DEFAULTS (fallback if not found in DB) ─────────────────────────
 // These match the seeded plan documents exactly.
 const PLAN_QUOTA_DEFAULTS = {
-    'Plan_0': { chatLimit: 100, chatScope: 'total',     imageLimit: 0,  carouselLimit: 0, videoLimit: 0, editImageAllowed: false, cashflowAllowed: false, validityDays: 90, aiLegalAllowed: false, aiAdsAllowed: false, voiceGenAllowed: false, webSearchAllowed: false, deepSearchAllowed: false, codeWriterAllowed: false, documentConvertAllowed: false },
-    'Plan_1': { chatLimit: -1,  chatScope: 'unlimited', imageLimit: 0,  carouselLimit: 0, videoLimit: 0, editImageAllowed: true,  cashflowAllowed: true,  validityDays: 30, aiLegalAllowed: true,  aiAdsAllowed: false, voiceGenAllowed: true,  webSearchAllowed: true,  deepSearchAllowed: true,  codeWriterAllowed: true,  documentConvertAllowed: true  },
-    'Plan_2': { chatLimit: -1,  chatScope: 'unlimited', imageLimit: 5,  carouselLimit: 1, videoLimit: 0, editImageAllowed: true,  cashflowAllowed: true,  validityDays: 30, aiLegalAllowed: true,  aiAdsAllowed: true,  voiceGenAllowed: true,  webSearchAllowed: true,  deepSearchAllowed: true,  codeWriterAllowed: true,  documentConvertAllowed: true  },
-    'Plan_3': { chatLimit: -1,  chatScope: 'unlimited', imageLimit: 10, carouselLimit: 5, videoLimit: 5, editImageAllowed: true,  cashflowAllowed: true,  validityDays: 30, aiLegalAllowed: true,  aiAdsAllowed: true,  voiceGenAllowed: true,  webSearchAllowed: true,  deepSearchAllowed: true,  codeWriterAllowed: true,  documentConvertAllowed: true  },
+    'Plan_0': { chatLimit: 100, chatScope: 'total', imageLimit: 0, carouselLimit: 0, videoLimit: 0, editImageAllowed: false, cashflowAllowed: false, validityDays: 90, aiLegalAllowed: false, aiAdsAllowed: false, voiceGenAllowed: false, webSearchAllowed: false, deepSearchAllowed: false, codeWriterAllowed: false, documentConvertAllowed: false },
+    'Plan_1': { chatLimit: -1, chatScope: 'unlimited', imageLimit: 0, carouselLimit: 0, videoLimit: 0, editImageAllowed: false, cashflowAllowed: true, validityDays: 30, aiLegalAllowed: true, aiAdsAllowed: false, voiceGenAllowed: true, webSearchAllowed: true, deepSearchAllowed: true, codeWriterAllowed: true, documentConvertAllowed: true },
+    'Plan_2': { chatLimit: -1, chatScope: 'unlimited', imageLimit: 5, carouselLimit: 1, videoLimit: 0, editImageAllowed: true, cashflowAllowed: true, validityDays: 30, aiLegalAllowed: true, aiAdsAllowed: true, voiceGenAllowed: true, webSearchAllowed: true, deepSearchAllowed: true, codeWriterAllowed: true, documentConvertAllowed: true },
+    'Plan_3': { chatLimit: -1, chatScope: 'unlimited', imageLimit: 10, carouselLimit: 5, videoLimit: 5, editImageAllowed: true, cashflowAllowed: true, validityDays: 30, aiLegalAllowed: true, aiAdsAllowed: true, voiceGenAllowed: true, webSearchAllowed: true, deepSearchAllowed: true, codeWriterAllowed: true, documentConvertAllowed: true },
 };
 
 /**
@@ -108,18 +108,18 @@ export const getUserPlan = async (userId) => {
         planKey,
         subscriptionId: sub._id,
         renewalDate: sub.renewalDate,
-        chatLimit:        plan.chatLimit        ?? defaults.chatLimit,
-        chatScope:        plan.chatScope        ?? defaults.chatScope,
-        imageLimit:       plan.imageLimit       ?? defaults.imageLimit,
-        carouselLimit:    plan.carouselLimit    ?? defaults.carouselLimit,
-        videoLimit:       plan.videoLimit       ?? defaults.videoLimit,
+        chatLimit: plan.chatLimit ?? defaults.chatLimit,
+        chatScope: plan.chatScope ?? defaults.chatScope,
+        imageLimit: plan.imageLimit ?? defaults.imageLimit,
+        carouselLimit: plan.carouselLimit ?? defaults.carouselLimit,
+        videoLimit: plan.videoLimit ?? defaults.videoLimit,
         editImageAllowed: plan.editImageAllowed ?? defaults.editImageAllowed,
-        cashflowAllowed:  plan.cashflowAllowed  ?? defaults.cashflowAllowed,
-        validityDays:     plan.validityDays     ?? defaults.validityDays,
-        aiLegalAllowed:    plan.aiLegalAllowed    ?? defaults.aiLegalAllowed,
-        aiAdsAllowed:      plan.aiAdsAllowed      ?? defaults.aiAdsAllowed,
-        voiceGenAllowed:   plan.voiceGenAllowed   ?? defaults.voiceGenAllowed,
-        webSearchAllowed:  plan.webSearchAllowed  ?? defaults.webSearchAllowed,
+        cashflowAllowed: plan.cashflowAllowed ?? defaults.cashflowAllowed,
+        validityDays: plan.validityDays ?? defaults.validityDays,
+        aiLegalAllowed: plan.aiLegalAllowed ?? defaults.aiLegalAllowed,
+        aiAdsAllowed: plan.aiAdsAllowed ?? defaults.aiAdsAllowed,
+        voiceGenAllowed: plan.voiceGenAllowed ?? defaults.voiceGenAllowed,
+        webSearchAllowed: plan.webSearchAllowed ?? defaults.webSearchAllowed,
         deepSearchAllowed: plan.deepSearchAllowed ?? defaults.deepSearchAllowed,
         codeWriterAllowed: plan.codeWriterAllowed ?? defaults.codeWriterAllowed,
         documentConvertAllowed: plan.documentConvertAllowed ?? defaults.documentConvertAllowed,
@@ -398,10 +398,10 @@ export const incrementQuota = async (userId, action, count = 1) => {
     const today = getTodayIST();
 
     const fieldMap = {
-        'chat':               'chatUsed',
-        'generate_image':     'imagesUsed',
-        'generate_carousel':  'carouselsUsed',
-        'generate_video':     'videosUsed',
+        'chat': 'chatUsed',
+        'generate_image': 'imagesUsed',
+        'generate_carousel': 'carouselsUsed',
+        'generate_video': 'videosUsed',
     };
 
     const field = fieldMap[action];
@@ -445,7 +445,7 @@ export const subscriptionService = {
     deductCredits: async () => true,
     deductCreditsFromMeta: async () => true,
     checkLimit: async () => ({ usage: 0, usageKey: 'mock' }),
-    incrementUsage: () => {},
+    incrementUsage: () => { },
     // New quota methods exposed here for convenience
     checkQuota,
     incrementQuota,
@@ -454,4 +454,4 @@ export const subscriptionService = {
 
 // Stub for old code that imported getToolCost
 export const getToolCost = () => 0;
-export const refreshFeatureCostCache = async () => {};
+export const refreshFeatureCostCache = async () => { };

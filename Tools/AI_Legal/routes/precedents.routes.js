@@ -88,13 +88,13 @@ router.post('/reanalyze', async (req, res) => {
  */
 router.post('/generate-pdf', async (req, res) => {
     try {
-        const { precedentData } = req.body;
+        const { precedentData, language } = req.body;
         
         if (!precedentData) {
             return res.status(400).json({ error: 'Precedent data is required' });
         }
 
-        const pdfBuffer = await generatePrecedentPDF(precedentData);
+        const pdfBuffer = await generatePrecedentPDF(precedentData, language);
         
         const caseName = (precedentData.case_identity?.case_name || precedentData.case_name || "Precedent").replace(/[^a-z0-9]/gi, '_');
         const court = (precedentData.case_identity?.court || precedentData.court || "Court").replace(/[^a-z0-9]/gi, '_');
