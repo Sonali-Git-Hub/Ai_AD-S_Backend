@@ -258,7 +258,14 @@ export const capturePaypalOrder = async (req, res) => {
         // Trigger GST Invoicing & Confirmation Emails
         let generatedInvoice = null;
         try {
-            generatedInvoice = await createInvoice(newSubscription._id, billingDetails);
+            let actualAmountPaidINR = null;
+            const captures = captureData.purchase_units?.[0]?.payments?.captures;
+            if (captures && captures[0] && captures[0].amount) {
+                const amountUSD = parseFloat(captures[0].amount.value);
+                const rate = parseFloat(process.env.PAYPAL_INR_TO_USD_RATE || '85');
+                actualAmountPaidINR = Math.round(amountUSD * rate * 100) / 100;
+            }
+            generatedInvoice = await createInvoice(newSubscription._id, billingDetails, 'paypal', actualAmountPaidINR);
         } catch (invoiceErr) {
             console.error('[INVOICE TRIGGER FAILED]', invoiceErr.message);
         }

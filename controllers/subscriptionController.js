@@ -254,7 +254,18 @@ export const purchasePlan = async (req, res) => {
         // Trigger GST Invoicing & Confirmation Emails
         let generatedInvoice = null;
         try {
-            generatedInvoice = await createInvoice(newSubscription._id, billingDetails);
+            let actualAmountPaid = null;
+            if (paymentId && !paymentId.startsWith('mock_') && process.env.RAZORPAY_KEY_SECRET && process.env.RAZORPAY_KEY_SECRET !== 'dummy_secret') {
+                try {
+                    const paymentObj = await razorpay.payments.fetch(paymentId);
+                    if (paymentObj && paymentObj.amount) {
+                        actualAmountPaid = paymentObj.amount / 100; // convert paise to INR
+                    }
+                } catch (e) {
+                    console.error('[Razorpay actual amount fetch failed]', e.message);
+                }
+            }
+            generatedInvoice = await createInvoice(newSubscription._id, billingDetails, 'razorpay', actualAmountPaid);
         } catch (invoiceErr) {
             console.error('[INVOICE TRIGGER FAILED]', invoiceErr.message);
         }

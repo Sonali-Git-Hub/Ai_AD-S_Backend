@@ -140,7 +140,34 @@ async function run() {
             console.error("❌ GST Inclusive calculations mismatch!");
         }
 
-        // 5. Test Duplicate Invoice Prevention
+        // 5. Test Custom Override (Paid amount: ₹1.00 via PayPal)
+        console.log("\n--- Testing Custom Paid Amount Override (e.g. ₹1.00 Test Payment) ---");
+        const subOverride = await Subscription.create({
+            userId: user._id,
+            planId: planExclusive._id,
+            creditsRemaining: 0,
+            billingCycle: 'monthly',
+            subscriptionStart: new Date(),
+            renewalDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+            subscriptionStatus: 'active',
+            paymentId: 'pay_override_' + Date.now()
+        });
+
+        const invoiceOverride = await createInvoice(subOverride._id, user.billingDetails, 'paypal', 1.00);
+        console.log(">> OVERRIDE CALCULATIONS CHECK:");
+        console.log(`Expected Total Paid: ₹1.00`);
+        console.log(`Invoice Total Amount (Calculated): ₹${invoiceOverride.totalAmount} (Expected: 1)`);
+        console.log(`Invoice Base Amount (Calculated): ₹${invoiceOverride.baseAmount} (Expected: 0.85)`);
+        console.log(`Invoice GST Amount (Calculated): ₹${invoiceOverride.gstAmount} (Expected: 0.15)`);
+        console.log(`Logged Gateway: ${invoiceOverride.paymentGateway} (Expected: paypal)`);
+
+        if (invoiceOverride.totalAmount === 1 && invoiceOverride.baseAmount === 0.85 && invoiceOverride.gstAmount === 0.15 && invoiceOverride.paymentGateway === 'paypal') {
+            console.log("✅ Custom Paid Amount Override passed!");
+        } else {
+            console.error("❌ Custom Paid Amount Override failed!");
+        }
+
+        // 6. Test Duplicate Invoice Prevention
         console.log("\n--- Testing Duplicate Invoice Prevention ---");
         // Attempt to generate invoice for the same subscription ID again
         const duplicateInvoice = await createInvoice(subInclusive._id, user.billingDetails);

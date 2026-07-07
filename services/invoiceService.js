@@ -279,9 +279,11 @@ const generateInvoicePdfBuffer = async (invoice, plan, subscription) => {
  * 
  * @param {string} subscriptionId - The ID of the newly created subscription
  * @param {object} clientBillingDetails - Billing info passed from frontend checkout
+ * @param {string} [gatewayOverride=null] - The exact payment gateway used
+ * @param {number} [amountOverride=null] - The exact amount paid in INR
  * @returns {Promise<object>} The generated Invoice document
  */
-export const createInvoice = async (subscriptionId, clientBillingDetails) => {
+export const createInvoice = async (subscriptionId, clientBillingDetails, gatewayOverride = null, amountOverride = null) => {
     let paymentIdForLog = 'N/A';
     try {
         console.log(`[INVOICE] Starting invoice generation for subscription: ${subscriptionId}...`);
@@ -330,14 +332,22 @@ export const createInvoice = async (subscriptionId, clientBillingDetails) => {
         let totalAmountPaid = 0;
         let gstPercentage = 18;
 
-        if (plan.isGstInclusive) {
-            totalAmountPaid = basePrice;
-            baseAmount = Math.round((basePrice / 1.18) * 100) / 100;
+        if (amountOverride !== null && amountOverride !== undefined) {
+            // Use the actual paid amount directly (calculate backward)
+            totalAmountPaid = Number(amountOverride);
+            baseAmount = Math.round((totalAmountPaid / 1.18) * 100) / 100;
             totalGst = Math.round((totalAmountPaid - baseAmount) * 100) / 100;
         } else {
-            baseAmount = basePrice;
-            totalGst = Math.round((basePrice * 0.18) * 100) / 100;
-            totalAmountPaid = Math.round((basePrice + totalGst) * 100) / 100;
+            // Default plan-based calculation
+            if (plan.isGstInclusive) {
+                totalAmountPaid = basePrice;
+                baseAmount = Math.round((basePrice / 1.18) * 100) / 100;
+                totalGst = Math.round((totalAmountPaid - baseAmount) * 100) / 100;
+            } else {
+                baseAmount = basePrice;
+                totalGst = Math.round((basePrice * 0.18) * 100) / 100;
+                totalAmountPaid = Math.round((basePrice + totalGst) * 100) / 100;
+            }
         }
 
         let cgst = 0;
@@ -381,13 +391,12 @@ export const createInvoice = async (subscriptionId, clientBillingDetails) => {
         const invoiceNumber = `INV-${currentYear}-${sequence}`;
 
         // Determine Payment Gateway
-        let paymentGateway = 'razorpay';
-        if (subscription.paymentId) {
+        let paymentGateway = gatewayOverride || 'razorpay';
+        if (!gatewayOverride && subscription.paymentId) {
             const pid = subscription.paymentId.toLowerCase();
             if (pid.startsWith('ch_') || pid.startsWith('py_') || pid.startsWith('pay_')) {
                 paymentGateway = 'razorpay';
             } else if (pid.startsWith('pay-') || pid.startsWith('paypal-') || pid.includes('pp-') || pid.length > 15) {
-                // heuristic for PayPal vs Razorpay IDs
                 if (!pid.startsWith('pay_')) {
                     paymentGateway = 'paypal';
                 }
