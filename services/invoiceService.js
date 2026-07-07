@@ -309,6 +309,15 @@ export const createInvoice = async (subscriptionId, clientBillingDetails, gatewa
         const plan = subscription.planId;
         if (!plan) throw new Error('Plan not found');
 
+        // Check if it is a free plan or a manually/mock assigned subscription
+        const isFreePlan = (subscription.billingCycle === 'yearly' ? plan.priceYearly : plan.priceMonthly) === 0;
+        const isMockPayment = !subscription.paymentId || subscription.paymentId.startsWith('mock_') || subscription.paymentId === 'manual' || subscription.paymentId === 'free';
+
+        if (isFreePlan || isMockPayment) {
+            console.log(`[INVOICE SKIP] Skipping invoice generation for subscription ${subscriptionId} (Free plan or mock/manual payment).`);
+            return null; // Return null instead of generating invoice doc
+        }
+
         // 2. Resolve Billing Details
         const billingDetails = {
             name: clientBillingDetails?.billingName || clientBillingDetails?.name || user.name || 'Valued Customer',
