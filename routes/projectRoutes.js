@@ -35,7 +35,7 @@ router.post('/', verifyToken, async (req, res) => {
             opponentRole: opponentRole || '',
             status: status || 'Active',
             stage: 'Pre-litigation',
-            priority: priority || 'Standard',
+            priority: priority || 'Medium',
             caseType: caseType || '',
             courtName: courtName || '',
             courtType: courtType || '',
