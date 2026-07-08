@@ -562,7 +562,15 @@ const sendInvoiceEmailWithAttachment = async (user, invoice, plan, subscription,
                         <p style="margin: 5px 0; font-size: 18px; color: #4f46e5;"><strong>Total Paid:</strong> ₹${invoice.totalAmount.toFixed(2)}</p>
                     </div>
 
-                    <div style="text-align: center; margin-top: 30px;">
+                    <div style="margin-top: 30px; padding-top: 20px; border-top: 1px dashed #e2e8f0; text-align: center; color: #475569;">
+                        <p style="margin: 0; font-size: 15px; font-weight: bold; color: #1e293b;">Thank you for your payment!</p>
+                        <p style="margin: 5px 0 0 0; font-size: 13px; line-height: 1.5; color: #64748b;">
+                            We truly appreciate your business and trust in AISA™ to power your platform. 
+                            Your subscription has been activated successfully.
+                        </p>
+                    </div>
+
+                    <div style="text-align: center; margin-top: 20px;">
                         <a href="${process.env.FRONTEND_URL || 'https://aisa24.com'}/dashboard/settings" style="display: inline-block; background: #4f46e5; color: white; padding: 12px 28px; text-decoration: none; border-radius: 8px; font-weight: bold;">Go to Dashboard</a>
                     </div>
                 </div>

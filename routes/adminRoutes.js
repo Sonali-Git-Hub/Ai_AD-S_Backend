@@ -20,7 +20,16 @@ import {
     getChatSessionDetail
 } from '../controllers/adminChatSessionController.js';
 import { getAnalytics, getErrorDrillDown } from '../controllers/analyticsController.js';
-import { getAdminBillingStats, getAdminInvoices } from '../controllers/adminBillingController.js';
+import {
+    getAdminBillingStats,
+    getAdminInvoices,
+    getFinanceDashboardStats,
+    getFinanceInvoices,
+    getMonthlyReport,
+    exportInvoicesCSV,
+    triggerRazorpaySync,
+} from '../controllers/adminBillingController.js';
+
 
 
 const router = express.Router();
@@ -85,8 +94,15 @@ router.get('/chat-sessions/:sessionId', verifyToken, isAdmin, getChatSessionDeta
 router.get('/analytics', verifyToken, isAdmin, getAnalytics);
 router.get('/analytics/errors/:mode', verifyToken, isAdmin, getErrorDrillDown);
 
-// Billing Management
+// Billing Management (legacy — kept for compat)
 router.get('/billing/stats', verifyToken, isAdmin, getAdminBillingStats);
 router.get('/billing/invoices', verifyToken, isAdmin, getAdminInvoices);
+
+// Finance Dashboard (new — rich stats + Razorpay sync)
+router.get('/finance/stats',          verifyToken, isAdmin, getFinanceDashboardStats);
+router.get('/finance/invoices',        verifyToken, isAdmin, getFinanceInvoices);
+router.get('/finance/monthly-report',  verifyToken, isAdmin, getMonthlyReport);
+router.get('/finance/export-csv',      verifyToken, isAdmin, exportInvoicesCSV);
+router.post('/finance/sync-razorpay',  verifyToken, isAdmin, triggerRazorpaySync);
 
 export default router;
