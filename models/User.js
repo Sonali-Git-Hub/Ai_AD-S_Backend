@@ -179,7 +179,13 @@ const userSchema = new mongoose.Schema({
         state: { type: String, default: '' },
         postalCode: { type: String, default: '' },
         country: { type: String, default: 'IN' }
-    }
+    },
+    // Delete Account OTP flow fields
+    deleteAccountOtp: { type: String, default: null },
+    deleteAccountOtpExpires: { type: Date, default: null },
+    deleteAccountOtpAttempts: { type: Number, default: 0 },
+    deleteAccountOtpVerified: { type: Boolean, default: false },
+    deleteAccountOtpVerifiedAt: { type: Date, default: null }
 }, { timestamps: true });
 
 export default mongoose.model('User', userSchema);

@@ -13,6 +13,7 @@ import { uploadToCloudinary } from "../services/cloudinary.service.js";
 import FriendRequest from "../models/FriendRequest.js";
 import SupportTicket from "../models/SupportTicket.js";
 import ChatSession from "../models/ChatSession.js";
+import { sendDeleteAccountOTP } from "../services/emailService.js";
 
 const route = express.Router()
 
@@ -626,6 +627,109 @@ route.post("/report", verifyToken, async (req, res) => {
     }
 });
 
+// POST /api/user/delete-otp/send - Send OTP for account deletion
+route.post("/delete-otp/send", verifyToken, async (req, res) => {
+    try {
+        const userId = req.user.id || req.user._id;
+        if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+        const user = await userModel.findById(userId);
+        if (!user) return res.status(404).json({ error: "User not found" });
+
+        // Cooldown check: 60 seconds since last sent
+        if (user.deleteAccountOtpVerifiedAt && !user.deleteAccountOtpVerified) {
+            const timeSinceLastSent = Date.now() - new Date(user.deleteAccountOtpVerifiedAt).getTime();
+            if (timeSinceLastSent < 60000) {
+                const secondsLeft = Math.ceil((60000 - timeSinceLastSent) / 1000);
+                return res.status(429).json({ 
+                    error: `Please wait ${secondsLeft} seconds before requesting a new verification code.` 
+                });
+            }
+        }
+
+        // Generate a 6-digit numeric OTP
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+        // Save OTP info to User
+        user.deleteAccountOtp = otp;
+        user.deleteAccountOtpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes expiry
+        user.deleteAccountOtpAttempts = 0;
+        user.deleteAccountOtpVerified = false;
+        user.deleteAccountOtpVerifiedAt = new Date(); // Track last sent timestamp
+        await user.save();
+
+        // Dispatch Email
+        const emailResult = await sendDeleteAccountOTP(user.email, user.name, otp);
+        if (!emailResult.success) {
+            console.error("[DELETE OTP] Failed to send email:", emailResult.message);
+            if (!process.env.RESEND_API_KEY) {
+                return res.status(200).json({ 
+                    success: true, 
+                    message: "Verification code generated (Mocked/Logged in Console)." 
+                });
+            }
+            return res.status(500).json({ error: "Failed to send verification code email. Please try again." });
+        }
+
+        res.status(200).json({ success: true, message: "Verification code sent to your registered email." });
+    } catch (err) {
+        console.error("[DELETE OTP SEND ERROR]", err);
+        res.status(500).json({ error: "Failed to send verification code." });
+    }
+});
+
+// POST /api/user/delete-otp/verify - Verify OTP for account deletion
+route.post("/delete-otp/verify", verifyToken, async (req, res) => {
+    try {
+        const userId = req.user.id || req.user._id;
+        if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+        const { otp } = req.body;
+        if (!otp) return res.status(400).json({ error: "Verification code is required" });
+
+        const user = await userModel.findById(userId);
+        if (!user) return res.status(404).json({ error: "User not found" });
+
+        // Check if attempts exceeded (brute-force protection: max 5 attempts)
+        if (user.deleteAccountOtpAttempts >= 5) {
+            return res.status(429).json({ 
+                error: "Too many failed attempts. Please request a new verification code." 
+            });
+        }
+
+        // Check expiration
+        if (!user.deleteAccountOtpExpires || new Date() > new Date(user.deleteAccountOtpExpires)) {
+            return res.status(400).json({ error: "Verification code has expired. Please request a new code." });
+        }
+
+        // Validate code
+        if (user.deleteAccountOtp !== otp) {
+            user.deleteAccountOtpAttempts += 1;
+            await user.save();
+            
+            const remaining = 5 - user.deleteAccountOtpAttempts;
+            if (remaining <= 0) {
+                return res.status(429).json({
+                    error: "Too many failed attempts. Please request a new verification code."
+                });
+            }
+            return res.status(400).json({ 
+                error: `Incorrect verification code. ${remaining} attempts remaining.` 
+            });
+        }
+
+        // Success: Mark verification state
+        user.deleteAccountOtpVerified = true;
+        user.deleteAccountOtpVerifiedAt = new Date(); // Start 10-minute deletion window
+        await user.save();
+
+        res.status(200).json({ success: true, message: "Verification successful. You can now proceed with deletion." });
+    } catch (err) {
+        console.error("[DELETE OTP VERIFY ERROR]", err);
+        res.status(500).json({ error: "Failed to verify code." });
+    }
+});
+
 // DELETE /api/user - Permanently delete user account and all associated data
 route.delete("/", verifyToken, async (req, res) => {
     try {
@@ -638,6 +742,20 @@ route.delete("/", verifyToken, async (req, res) => {
 
         const user = await userModel.findById(userId);
         if (!user) return res.status(404).json({ error: "User not found" });
+
+        // OTP verification check
+        if (!user.deleteAccountOtpVerified || !user.deleteAccountOtpVerifiedAt) {
+            return res.status(400).json({ error: "OTP verification required before deleting account." });
+        }
+
+        const deleteWindowMs = 10 * 60 * 1000; // 10 minutes deletion window
+        const timeSinceVerified = Date.now() - new Date(user.deleteAccountOtpVerifiedAt).getTime();
+        if (timeSinceVerified > deleteWindowMs) {
+            // Reset status
+            user.deleteAccountOtpVerified = false;
+            await user.save();
+            return res.status(400).json({ error: "Verification window expired. Please request a new code." });
+        }
 
         console.log(`[DELETE ACCOUNT] Starting account deletion for user: ${userId} (${user.email})`);
 
