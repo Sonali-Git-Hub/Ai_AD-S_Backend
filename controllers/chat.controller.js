@@ -4,6 +4,12 @@ import logger from '../utils/logger.js';
 import Conversation from '../models/Conversation.model.js';
 import User from '../models/User.js';
 import { uploadToGCS, gcsFilename } from '../services/gcs.service.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 import pdf from 'pdf-parse/lib/pdf-parse.js';
 import mammoth from 'mammoth';
 import xlsx from 'xlsx';
@@ -162,19 +168,38 @@ export const uploadAttachment = async (req, res, next) => {
 
         // Upload to GCS aisa_objects bucket for visual reference (image/pdf link)
         const ext = req.file.originalname.split('.').pop() || 'bin';
-        const gcsResult = await uploadToGCS(fileBuffer, {
-            folder: 'chat_uploads',
-            filename: gcsFilename(`chat_${Date.now()}`, ext),
-            mimeType: mimeType,
-            isPublic: false,
-            useSignedUrl: true,
-        });
+        let url = null;
+        try {
+            const gcsResult = await uploadToGCS(fileBuffer, {
+                folder: 'chat_uploads',
+                filename: gcsFilename(`chat_${Date.now()}`, ext),
+                mimeType: mimeType,
+                isPublic: false,
+                useSignedUrl: true,
+            });
+            url = gcsResult.publicUrl;
+        } catch (gcsError) {
+            logger.warn(`[Chat Upload] GCS upload failed (${gcsError.message}). Falling back to local storage...`);
+            // Ensure public/uploads exists
+            const uploadsDir = path.join(__dirname, '..', 'public', 'uploads');
+            if (!fs.existsSync(uploadsDir)) {
+                fs.mkdirSync(uploadsDir, { recursive: true });
+            }
+            const localFilename = `chat_${Date.now()}.${ext}`;
+            const localFilePath = path.join(uploadsDir, localFilename);
+            fs.writeFileSync(localFilePath, fileBuffer);
+            
+            // Generate local URL
+            const port = process.env.PORT || 8080;
+            url = `http://localhost:${port}/uploads/${localFilename}`;
+            logger.info(`[Chat Upload] Local upload fallback successful: ${url}`);
+        }
 
         // Return text so frontend can send it back as context
         res.status(200).json({
             success: true,
             data: {
-                url: gcsResult.publicUrl,
+                url: url,
                 mimetype: mimeType,
                 filename: req.file.originalname,
                 size: req.file.size,

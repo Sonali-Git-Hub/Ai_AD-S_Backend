@@ -90,6 +90,9 @@ import * as generationController from '../controllers/generation.controller.js';
 // POST /api/social-agent/generate - Single post / Daily run
 router.post('/generate', creditMiddleware, generationController.triggerGeneration);
 
+// POST /api/social-agent/generate/manual - Manual post generation
+router.post('/generate/manual', creditMiddleware, generationController.generateManualPost);
+
 // POST /api/social-agent/generate/regenerate - Variations with intent
 router.post('/generate/regenerate', creditMiddleware, generationController.triggerRegeneration);
 

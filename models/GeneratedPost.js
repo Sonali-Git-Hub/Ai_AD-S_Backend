@@ -24,7 +24,7 @@ const GeneratedPostSchema = new mongoose.Schema({
   },
   platform: { 
     type: String, 
-    enum: ['instagram', 'facebook', 'linkedin', 'twitter', 'youtube'],
+    enum: ['instagram', 'facebook', 'linkedin', 'twitter', 'threads', 'tiktok', 'pinterest', 'youtube', 'youtube community'],
     required: true 
   },
   aspectRatio: { 
