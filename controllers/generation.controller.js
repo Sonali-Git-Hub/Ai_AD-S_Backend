@@ -52,6 +52,7 @@ export const triggerGeneration = async (req, res) => {
       entryIds,
       userId: req.user?._id,
       brandMetadata
+    });
 
     // 💰 Deduct credits for the pipeline request
     if (req.creditMeta) {
