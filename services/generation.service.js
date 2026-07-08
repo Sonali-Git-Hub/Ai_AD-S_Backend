@@ -20,6 +20,12 @@ import axios from 'axios';
 import { uploadToGCS, gcsFilename, downloadFromGCS } from './gcs.service.js';
 import sharp from 'sharp';
 import { subscriptionService } from './subscriptionService.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // --- JSON RECOVERY SYSTEM ---
 // Use the centralized safeParseLLMJson utility
@@ -1215,6 +1221,205 @@ Output ONLY a raw JSON array (no markdown, no explanation) like this:
 
   logger.info(`[VisualPost] ✅ Pipeline complete in ${totalSec}s | AssetID=${asset._id} | Model=${selectedModel}`);
   return asset;
+};
+
+const getImageBase64 = async (url) => {
+  try {
+    if (url.includes('/uploads/')) {
+      const filename = url.split('/uploads/').pop();
+      const uploadsDir = path.join(__dirname, '..', 'public', 'uploads');
+      const filePath = path.join(uploadsDir, filename);
+      if (fs.existsSync(filePath)) {
+        return fs.readFileSync(filePath).toString('base64');
+      }
+    }
+    // Remote/GCS fallback
+    const response = await axios.get(url, { responseType: 'arraybuffer' });
+    return Buffer.from(response.data, 'binary').toString('base64');
+  } catch (err) {
+    console.error(`[getImageBase64] Failed to convert image to base64: ${err.message}`);
+    return null;
+  }
+};
+
+export const generateManualPost = async (workspaceId, payload) => {
+  const {
+    platform,
+    contentType,
+    targetAudience,
+    tone,
+    description,
+    uploadedFiles,
+    language,
+    contentLength,
+    cta,
+    enhancements,
+    userId
+  } = payload;
+
+  const brand = await BrandProfile.findOne({ workspaceId });
+  const toneStr = Array.isArray(tone) ? tone.join(', ') : tone || 'Professional';
+
+  const brandContext = brand ? `Name: ${brand.companyName || 'Brand'}, Industry: ${brand.targetIndustry || 'General'}, Description: ${brand.businessDescription || ''}` : 'No brand profile set';
+
+  const systemPrompt = `
+    You are an expert Social Media Copywriter, growth marketer, and AI prompt engineer.
+    Create a highly engaging, custom social media post for ${platform} based on the user's manual selections.
+    
+    BRAND CONTEXT:
+    ${brandContext}
+    
+    CRITICAL INPUTS:
+    - POST FORMAT/TYPE: ${contentType}
+    - TARGET AUDIENCE: ${targetAudience}
+    - TONE OF VOICE: ${toneStr}
+    - LANGUAGE: ${language || 'English'}
+    - CONTENT LENGTH: ${contentLength || 'Medium'}
+    - PREFERRED CTA STYLE: ${cta || 'None'}
+    
+    USER'S CORE DESCRIPTION / PROMPT:
+    "${description}"
+    
+    STRICT INSTRUCTIONS:
+    1. LANGUAGE: You MUST write all user-facing copy (hook, captions, cta, variations) in ${language || 'English'}. If the language is "Hinglish", write Hindi conversational text using the Latin/English alphabet.
+    2. TONE: The writing style must strongly reflect the chosen tone(s): ${toneStr}. For example, if "Luxury", use elegant and premium words; if "Gen-Z", use casual modern slang and highly engaging structure.
+    3. TARGET AUDIENCE: Tailor the vocabulary, pain points, and benefits specifically to appeal to ${targetAudience}.
+    4. CONTENT LENGTH: Respect the chosen length:
+       - "Short": Keep under 150 characters total, very punchy.
+       - "Medium": Standard social media post size (2-3 paragraphs).
+       - "Long": Detailed post with bullet points or paragraphs (up to 400 characters).
+       - "Carousel" or "Thread": Design it to flow step-by-step.
+    5. CTA: The call to action must match the style of "${cta}".
+    6. TOGGLES: Respect the following toggles:
+       - Generate Caption: ${enhancements?.generateCaption !== false ? 'YES' : 'NO'} (If NO, leave captionShort and captionLong blank)
+       - Generate Hashtags: ${enhancements?.generateHashtags !== false ? 'YES' : 'NO'} (If NO, return empty hashtags array)
+       - Generate CTA: ${enhancements?.generateCTA !== false ? 'YES' : 'NO'} (If NO, leave cta blank)
+       - Generate Emoji Suggestions: ${enhancements?.generateEmojiSuggestions !== false ? 'YES' : 'NO'} (If NO, do not include emojis in copy)
+       - Generate SEO Keywords: ${enhancements?.generateSEOKeywords !== false ? 'YES' : 'NO'} (If NO, return empty seoKeywords array)
+       - Generate Image Prompt: ${enhancements?.generateImagePrompt !== false ? 'YES' : 'NO'} (If NO, return empty imagePrompt)
+       - Generate Alt Text: ${enhancements?.generateAltText !== false ? 'YES' : 'NO'} (If NO, return empty altText)
+    
+    OUTPUT JSON FORMAT (STRICT):
+    {
+      "hook": "A highly punchy hook tailored to the post type, tone, and audience",
+      "captionShort": "Short version of the post (under 150 characters, matching selected language and tone)",
+      "captionLong": "Detailed/storytelling version of the post (under 400 characters, matching selected language and tone)",
+      "cta": "Primary Call To Action matching the preferred style: ${cta}",
+      "hashtags": ["Array of strategic hashtags (up to 15) if requested, else empty"],
+      "seoKeywords": ["Array of search keywords if requested, else empty"],
+      "imagePrompt": "A highly detailed photorealistic image prompt describing a social media ad visual matching the post context (suitable for Imagen 3/Dall-E). Mention style, composition, lighting, and colors. Return empty if requested NO.",
+      "altText": "Short descriptive alt text for accessibility if requested, else empty",
+      "variations": [
+        { "type": "Storytelling Angle", "text": "Alternative version using storytelling" },
+        { "type": "Problem-Solution", "text": "Alternative version focusing on a pain point and your solution" }
+      ]
+    }
+  `;
+
+  const res = await AskOpenAIRaw(systemPrompt);
+  const copyOutput = safeParse(res);
+
+  // Map length / type to model type
+  let type = 'image';
+  if (contentLength === 'Carousel' || contentLength === 'Thread') {
+    type = 'carousel';
+  }
+
+  // Map platform to lowercase for the enum
+  const normPlatform = (platform || 'instagram').toLowerCase().replace(' (x)', '').replace(' community', '');
+
+  const post = await GeneratedPost.create({
+    workspaceId,
+    type,
+    platform: normPlatform,
+    hook: copyOutput.hook || description.substring(0, 50),
+    captionShort: copyOutput.captionShort || '',
+    captionLong: copyOutput.captionLong || '',
+    hashtags: copyOutput.hashtags || [],
+    cta: copyOutput.cta || '',
+    variations: copyOutput.variations || [],
+    status: 'draft',
+    scheduledDate: new Date(),
+    dateString: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  });
+
+  // Get logo and base image URL (prefer first uploaded file if present, fallback to brand logo)
+  let logoUrl = brand?.logoUrl || null;
+  let baseImageUrl = null;
+
+  if (uploadedFiles && uploadedFiles.length > 0) {
+    const firstFile = uploadedFiles[0];
+    const isLogo = firstFile.filename?.toLowerCase().includes('logo') || 
+                   description.toLowerCase().includes('logo');
+                   
+    const promptText = copyOutput.imagePrompt || `A professional high-quality social media ad for ${platform}. ${description}`;
+    
+    if (isLogo) {
+      logoUrl = firstFile.url;
+      // Since it's identified as a logo, generate a new AI background from scratch
+      try {
+        console.log(`[ManualGen] Uploaded file identified as logo. Generating AI background...`);
+        baseImageUrl = await generateImageFromPrompt(promptText, null, '1:1', 'imagen-3.0-generate-001');
+      } catch (err) {
+        console.error(`[ManualGen] Imagen background generation failed: ${err.message}`);
+      }
+    } else {
+      // It's a post reference image! Run Image-to-Image / Edit pipeline
+      try {
+        console.log(`[ManualGen] Uploaded file used as Image-to-Image reference. Converting to base64...`);
+        const base64 = await getImageBase64(firstFile.url);
+        if (base64) {
+          console.log(`[ManualGen] Executing Image-to-Image edit with reference image...`);
+          // Note: Image editing via Gemini models (gemini-2.5-flash-image) supports originalImage parameter
+          baseImageUrl = await generateImageFromPrompt(promptText, base64, '1:1', 'gemini-2.5-flash-image');
+        } else {
+          console.warn(`[ManualGen] Base64 conversion failed, falling back to raw uploaded image as background`);
+          baseImageUrl = firstFile.url;
+        }
+      } catch (err) {
+        console.error(`[ManualGen] Image-to-Image pipeline failed: ${err.message}. Falling back to raw uploaded image.`);
+        baseImageUrl = firstFile.url;
+      }
+    }
+  } else {
+    // No uploaded file: generate AI background
+    const promptText = copyOutput.imagePrompt || `A professional high-quality social media ad for ${platform}. ${description}`;
+    try {
+      console.log(`[ManualGen] Generating AI background...`);
+      baseImageUrl = await generateImageFromPrompt(promptText, null, '1:1', 'imagen-3.0-generate-001');
+    } catch (err) {
+      console.error(`[ManualGen] Imagen background generation failed: ${err.message}`);
+    }
+  }
+
+  let finalImageUrl = baseImageUrl || logoUrl || "https://storage.googleapis.com/social_media_agent_assets/mock/ai_post.png";
+  if (baseImageUrl) {
+    try {
+      console.log(`[ManualGen] Compositing overlays on base image with logo: ${logoUrl ? 'Yes' : 'No'}`);
+      finalImageUrl = await applyVisualOverlays(baseImageUrl, logoUrl, post.hook, post.captionShort || post.captionLong?.substring(0, 50), '1:1');
+    } catch (err) {
+      console.error(`[ManualGen] Visual overlays composition failed: ${err.message}`);
+      // Fallback to base image
+      finalImageUrl = baseImageUrl;
+    }
+  }
+
+  // Save the finalized visual as a GeneratedAsset
+  const asset = await GeneratedAsset.create({
+    postId: post._id,
+    workspaceId,
+    assetType: 'image',
+    assetSource: 'generated',
+    gcsUrl: finalImageUrl,
+    mimeType: 'image/png',
+    fileSize: 0,
+    dateString: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  });
+
+  post.primaryAssetId = asset._id;
+  await post.save();
+
+  return post;
 };
 
 // const mockMediaGeneration = async () => "https://storage.googleapis.com/social_media_agent_assets/mock/ai_post.png"; // Removed for isolation

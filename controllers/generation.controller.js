@@ -9,7 +9,7 @@ import * as socialAgentService from '../services/socialAgent.service.js';
 import UploadAsset from '../models/UploadAsset.js';
 import CalendarEntry from '../models/CalendarEntry.js';
 import ContentCalendar from '../models/ContentCalendar.js';
-import { incrementQuota } from '../services/subscriptionService.js';
+import { incrementQuota, subscriptionService } from '../services/subscriptionService.js';
 import { isFreeTierUser } from '../middleware/creditSystem.js';
 
 
@@ -551,6 +551,54 @@ export const generateVisualPost = async (req, res) => {
   } catch (error) {
     console.error(`\n❌ [VisualPost] Controller error: ${error.message}`);
     logger.error(`[VisualPost] Failed to start job: ${error.message}`);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+export const generateManualPost = async (req, res) => {
+  try {
+    const {
+      workspaceId,
+      platform,
+      contentType,
+      targetAudience,
+      tone,
+      description,
+      uploadedFiles,
+      language,
+      contentLength,
+      cta,
+      enhancements
+    } = req.body;
+
+    if (!workspaceId) {
+      return res.status(400).json({ success: false, error: "workspaceId is required" });
+    }
+
+    const post = await generationService.generateManualPost(workspaceId, {
+      platform,
+      contentType,
+      targetAudience,
+      tone,
+      description,
+      uploadedFiles,
+      language,
+      contentLength,
+      cta,
+      enhancements,
+      userId: req.user?._id
+    });
+
+    // 💰 Deduct credits for the pipeline request if creditMeta is present
+    if (req.creditMeta) {
+      await subscriptionService.deductCreditsFromMeta(req.creditMeta).catch(e => {
+        logger.error(`[ManualGen] Credit deduction failed: ${e.message}`);
+      });
+    }
+
+    res.json({ success: true, post, message: "Manual post generated successfully" });
+  } catch (error) {
+    logger.error(`[GenerationController] generateManualPost failed: ${error.message}`);
     res.status(500).json({ success: false, error: error.message });
   }
 };
