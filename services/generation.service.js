@@ -303,20 +303,33 @@ OUTPUT ONLY this JSON (no markdown):
 };
 
 
-export const generateContentForSpecificRow = async (workspaceId, entryId) => {
+export const generateContentForSpecificRow = async (workspaceId, entryId, brandMetadata = null) => {
   logger.info(`[GenerationService] Initializing specific row generation: EntryID=${entryId}, WorkspaceID=${workspaceId}`);
 
   const brand = await BrandProfile.findOne({ workspaceId });
   const entry = await CalendarEntry.findById(entryId);
   const usage = await PlanUsage.findOne({ workspaceId });
 
-  if (!brand || !entry) {
-    logger.error(`[GenerationService] Critical failure: Missing data for generation. BrandFound=${!!brand}, EntryFound=${!!entry}`);
-    throw new Error("Data missing for brand or entry");
+  if (!entry) {
+    logger.error(`[GenerationService] Critical failure: Missing calendar row for ${entryId}`);
+    throw new Error("Calendar entry missing for generation");
   }
 
-  logger.debug(`[GenerationService] Distilling brand context for: ${brand.companyName}`);
-  const brandContext = await callLLM('context_distillation', PROMPTS.CONTEXT_DISTILLATION(brand), workspaceId);
+  const mergedBrand = {
+    companyName: brand?.companyName || brandMetadata?.companyName || 'Your Brand',
+    website: brand?.website || brandMetadata?.website || '',
+    extractedBrandSummary: brand?.extractedBrandSummary || brand?.companyOverviewText || brandMetadata?.overview || '',
+    companyOverviewText: brand?.companyOverviewText || brandMetadata?.overview || '',
+    toneOfVoice: brand?.toneOfVoice || brandMetadata?.toneOfVoice || 'Professional',
+    targetIndustry: brand?.targetIndustry || brandMetadata?.targetIndustry || '',
+    targetAudience: brand?.targetAudience || brandMetadata?.targetAudience || '',
+    contentObjective: brand?.contentObjective || brandMetadata?.contentObjective || '',
+    brandColors: brand?.brandColors || [],
+    structuredIdentity: brand?.structuredIdentity || {}
+  };
+
+  logger.debug(`[GenerationService] Distilling brand context for: ${mergedBrand.companyName}`);
+  const brandContext = await callLLM('context_distillation', PROMPTS.CONTEXT_DISTILLATION(mergedBrand), workspaceId);
 
   logger.info(`[GenerationService] Synthesizing copy for entry: ${entry.title || entry.id}`);
   const copyOutput = await callLLM('copy_generation', PROMPTS.COPY_GENERATION(brandContext, entry, entry.platform || 'Instagram'), workspaceId);
@@ -403,7 +416,7 @@ const processGenerationJob = async (jobId, options) => {
     for (const entry of entries) {
       try {
         logger.debug(`[GenerationJob] Synthesizing entry: ${entry._id}`);
-        await generateContentForSpecificRow(job.workspaceId, entry._id);
+        await generateContentForSpecificRow(job.workspaceId, entry._id, options.brandMetadata);
         job.completedCount++;
         await job.save();
         logger.info(`[GenerationJob] Entry ${entry._id} completed (${job.completedCount}/${entries.length})`);

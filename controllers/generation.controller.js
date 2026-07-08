@@ -44,14 +44,14 @@ export const generateFromCalendarRow = async (req, res) => {
 
 export const triggerGeneration = async (req, res) => {
   try {
-    const { workspaceId, mode, count, entryIds } = req.body;
+    const { workspaceId, mode, count, entryIds, brandMetadata } = req.body;
     if (!workspaceId) return res.status(400).json({ success: false, error: "workspaceId is required" });
 
     const job = await generationService.startGenerationJob(workspaceId, mode || 'today', {
       count,
       entryIds,
-      userId: req.user?._id
-    });
+      userId: req.user?._id,
+      brandMetadata
 
     // 💰 Deduct credits for the pipeline request
     if (req.creditMeta) {
