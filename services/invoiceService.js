@@ -453,7 +453,8 @@ export const createInvoice = async (subscriptionId, clientBillingDetails, gatewa
             console.log(`[INVOICE] PDF written locally at: ${pdfFilePath}`);
         } catch (pdfErr) {
             logFailure(subscription.paymentId, 'PDF_GENERATION', pdfErr.message);
-            throw new Error(`PDF generation failed: ${pdfErr.message}`);
+            console.error(`[INVOICE WARNING] PDF generation failed, but saving invoice metadata to DB:`, pdfErr.message);
+            invoice.invoiceUrl = null;
         }
 
         // Save invoice to database
