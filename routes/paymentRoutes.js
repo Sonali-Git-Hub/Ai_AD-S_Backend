@@ -1,5 +1,5 @@
 import express from 'express';
-import { getPaymentHistory, createOrder, verifyPayment } from '../controllers/paymentController.js';
+import { getPaymentHistory, createOrder, verifyPayment, downloadInvoicePdf } from '../controllers/paymentController.js';
 import { createApplePayOrder, validateAppleMerchant, verifyApplePayment } from '../controllers/applePayController.js';
 import { verifyGooglePlaySubscription } from '../controllers/googlePlayController.js';
 import { verifyAppleStoreSubscription } from '../controllers/appleStoreController.js';
@@ -12,6 +12,7 @@ const router = express.Router();
 router.get('/history', verifyToken, getPaymentHistory);
 router.post('/create-order', verifyToken, createOrder);
 router.post('/verify-payment', verifyToken, verifyPayment);
+router.get('/invoice/:subscriptionId', verifyToken, downloadInvoicePdf);
 
 // ─── Google Play Store In-App Purchase Route (Mobile App) ───────────────────
 router.post('/verify/google', verifyToken, verifyGooglePlaySubscription);

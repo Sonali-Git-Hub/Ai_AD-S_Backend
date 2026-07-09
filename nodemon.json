@@ -1,0 +1,29 @@
+{
+  "ignore": [
+    "server_output.log",
+    "logs/**/*",
+    "*.log",
+    "public/**/*",
+    "temp/**/*",
+    "scratch/**/*",
+    "certs/**/*",
+    "*.cer",
+    "*.pem",
+    "*.csr",
+    "*.key",
+    "node_modules"
+  ],
+  "watch": [
+    "server.js",
+    "controllers/**/*.js",
+    "routes/**/*.js",
+    "models/**/*.js",
+    "services/**/*.js",
+    "utils/**/*.js",
+    "middleware/**/*.js",
+    "middlewares/**/*.js",
+    "config/**/*.js",
+    "Tools/**/*.js"
+  ],
+  "ext": "js,json"
+}

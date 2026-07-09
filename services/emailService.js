@@ -339,7 +339,50 @@ export const sendAdminToUserEmail = async (userEmail, userName, subject, message
     } catch (error) {
         console.error('[EMAIL SERVICE] Failed to send Admin-to-User email:', error);
         return { success: false, message: error.message };
-    }
-};
-
-
+     }
+ };
+ 
+ /**
+  * Send Delete Account OTP to User
+  */
+ export const sendDeleteAccountOTP = async (userEmail, userName, otp) => {
+     try {
+         await resend.emails.send({
+             from: `AISA™ Security <${EMAIL_CONFIG.user}>`,
+             to: [userEmail],
+             subject: `🔒 Delete Account Verification Code - ${otp}`,
+             html: `
+                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
+                     <div style="background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); padding: 25px; border-radius: 10px 10px 0 0; text-align: center; color: white;">
+                         <h1 style="color: white; margin: 0; font-size: 24px; font-weight: bold;">Account Deletion Request</h1>
+                         <p style="color: #fca5a5; margin: 5px 0 0 0; font-size: 14px; opacity: 0.9;">Security Verification Required</p>
+                     </div>
+                     
+                     <div style="padding: 30px; background: #fafafa; text-align: center;">
+                         <p style="text-align: left; font-size: 15px; color: #1e293b;">Hello <strong>${userName}</strong>,</p>
+                         <p style="text-align: left; font-size: 14px; line-height: 1.6; color: #475569;">
+                             We received a request to permanently delete your AISA™ account. To proceed, please use the following One-Time Password (OTP) verification code:
+                         </p>
+                         
+                         <div style="background: white; padding: 20px; border-radius: 12px; margin: 25px 0; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); display: inline-block;">
+                             <span style="font-size: 32px; font-weight: 900; letter-spacing: 6px; color: #b91c1c;">${otp}</span>
+                         </div>
+                         
+                         <p style="text-align: left; font-size: 13px; color: #ef4444; font-weight: bold; margin-bottom: 0;">
+                             ⚠️ Note: This OTP is valid for 10 minutes and can only be verified a limited number of times. If you did not request this account deletion, please ignore this email and change your account password immediately.
+                         </p>
+                     </div>
+                     
+                     <div style="background: #f1f5f9; padding: 15px; border-radius: 0 0 10px 10px; text-align: center; color: #64748b; font-size: 12px;">
+                         <p style="margin: 0;">AISA Platform - Security Alerts</p>
+                     </div>
+                 </div>
+             `
+         });
+         console.log(`[EMAIL SERVICE] Account deletion OTP sent successfully to: ${userEmail}`);
+         return { success: true };
+     } catch (error) {
+         console.error('[EMAIL SERVICE] Failed to send delete account OTP email:', error);
+         return { success: false, message: error.message };
+     }
+ };

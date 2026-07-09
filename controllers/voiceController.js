@@ -341,6 +341,7 @@ export const transcribeSpeech = async (req, res) => {
             const response = await openai.audio.transcriptions.create({
                 file: fs.createReadStream(tempFilePath),
                 model: 'whisper-1',
+                prompt: "IPC Section 420, 406, 302, CrPC, BNS, FIR number, court notice, contract termination clause, agreement, commercial lease, legal notice reply, anticipatory bail petition. Hindi-English mixed, Hinglish, law terminology. Ek draft ka case hai jisme pati apni patni se khushi money ke paise mang raha hai."
             });
 
             console.log(`🎙️ [VoiceController] Transcription result: "${response.text}"`);

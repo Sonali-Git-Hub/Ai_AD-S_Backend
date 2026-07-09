@@ -1,5 +1,7 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import Project from '../models/Project.js';
+import Evidence from '../models/Evidence.js';
 import { verifyToken } from '../middleware/authorization.js';
 import * as legalIntelligenceService from '../Tools/AI_Legal/services/legalIntelligence.service.js';
 import { v4 as uuidv4 } from 'uuid';
@@ -33,7 +35,7 @@ router.post('/', verifyToken, async (req, res) => {
             opponentRole: opponentRole || '',
             status: status || 'Active',
             stage: 'Pre-litigation',
-            priority: priority || 'Standard',
+            priority: priority || 'Medium',
             caseType: caseType || '',
             courtName: courtName || '',
             courtType: courtType || '',
@@ -127,14 +129,7 @@ router.post('/', verifyToken, async (req, res) => {
                                 status: 'Pending',
                                 priority: toStr(p.priority) || 'Medium'
                             })),
-                        evidence: normalized.evidence
-                            .filter(e => e && (e.title || e.name || e.description))
-                            .map(e => ({
-                                name: toStr(e.title || e.name || e.description),
-                                type: toStr(e.type) || 'Document',
-                                status: toStr(e.strength) || 'Moderate',
-                                uploadDate: new Date()
-                            })),
+                        evidence: [],
                         research: normalized.research
                             .filter(r => r && (r.law || r.lawName))
                             .map(r => ({
@@ -317,18 +312,7 @@ const performCaseAnalysis = async (req, res) => {
                         priority: toStr(p.priority) || 'Medium'
                     }))
             ],
-            evidence: [
-                ...(project.evidence || []),
-                ...normalized.evidence
-                    .filter(e => e && (e.title || e.name || e.description))
-                    .filter(e => !(project.evidence || []).some(ex => ex.name === (e.title || e.name || e.description)))
-                    .map(e => ({
-                        name: toStr(e.title || e.name || e.description),
-                        type: toStr(e.type) || 'Document',
-                        status: toStr(e.strength) || 'Moderate',
-                        uploadDate: new Date()
-                    }))
-            ],
+            evidence: project.evidence || [],
             research: [
                 ...(project.research || []),
                 ...normalized.research
@@ -362,6 +346,136 @@ router.post('/:id/analyze', verifyToken, performCaseAnalysis);
 // @desc    Auto-Analyze alias — POST /api/cases/:id/auto-analyze
 router.post('/:id/auto-analyze', verifyToken, performCaseAnalysis);
 
+
+// @desc    Get all evidence for a case
+// @route   GET /api/cases/:caseId/evidence
+// @access  Private
+router.get('/:caseId/evidence', verifyToken, async (req, res) => {
+    try {
+        const evidenceList = await Evidence.find({ caseId: req.params.caseId }).sort({ createdAt: -1 });
+        res.json(evidenceList);
+    } catch (error) {
+        console.error('Error fetching evidence:', error);
+        res.status(500).json({ error: 'Failed to fetch evidence' });
+    }
+});
+
+// @desc    Create a new evidence item for a case
+// @route   POST /api/cases/:caseId/evidence
+// @access  Private
+router.post('/:caseId/evidence', verifyToken, async (req, res) => {
+    try {
+        const {
+            filename, name, fileUrl, uri, fileType, type, category,
+            verificationStatus, admissibility, strength, confidence,
+            confidenceScore, size, hash, notes, aiSummary, ocrStatus, aiProcessed
+        } = req.body;
+
+        const evidence = new Evidence({
+            caseId: req.params.caseId,
+            filename: filename || name || 'Unnamed Evidence',
+            name: name || filename || 'Unnamed Evidence',
+            fileUrl: fileUrl || uri || '',
+            uri: uri || fileUrl || '',
+            fileType: fileType || type || '',
+            type: type || fileType || '',
+            category: category || 'Evidence',
+            verificationStatus: verificationStatus || admissibility || 'Pending',
+            admissibility: admissibility || verificationStatus || 'Pending',
+            strength: strength || 'Moderate',
+            confidence: confidence || confidenceScore || 96,
+            confidenceScore: confidenceScore || confidence || 96,
+            size: size || 0,
+            hash: hash || '',
+            notes: notes || '',
+            aiSummary: aiSummary || '',
+            ocrStatus: ocrStatus || 'Success (OCR Done)',
+            aiProcessed: aiProcessed || 'Extracted successfully',
+            uploadedBy: (req.user?.id && mongoose.Types.ObjectId.isValid(req.user.id)) ? req.user.id : undefined
+        });
+
+        await evidence.save();
+        res.status(201).json(evidence);
+    } catch (error) {
+        console.error('Error creating evidence:', error.message, error.stack);
+        res.status(500).json({ error: 'Failed to create evidence', details: error.message });
+    }
+});
+
+// @desc    Update an evidence item
+// @route   PATCH /api/cases/:caseId/evidence/:evidenceId
+// @access  Private
+router.patch('/:caseId/evidence/:evidenceId', verifyToken, async (req, res) => {
+    try {
+        const updates = req.body;
+        delete updates._id;
+        delete updates.caseId;
+
+        const updated = await Evidence.findOneAndUpdate(
+            { _id: req.params.evidenceId, caseId: req.params.caseId },
+            { $set: updates },
+            { new: true }
+        );
+
+        if (!updated) {
+            return res.status(404).json({ error: 'Evidence not found' });
+        }
+        res.json(updated);
+    } catch (error) {
+        console.error('Error updating evidence:', error);
+        res.status(500).json({ error: 'Failed to update evidence' });
+    }
+});
+
+// @desc    Delete an evidence item
+// @route   DELETE /api/cases/:caseId/evidence/:evidenceId
+// @access  Private
+router.delete('/:caseId/evidence/:evidenceId', verifyToken, async (req, res) => {
+    try {
+        const deleted = await Evidence.findOneAndDelete({
+            _id: req.params.evidenceId,
+            caseId: req.params.caseId
+        });
+
+        if (!deleted) {
+            return res.status(404).json({ error: 'Evidence not found' });
+        }
+        res.json({ success: true, message: 'Evidence deleted successfully', deleted });
+    } catch (error) {
+        console.error('Error deleting evidence:', error);
+        res.status(500).json({ error: 'Failed to delete evidence' });
+    }
+});
+
+// @desc    Get evidence statistics/counters for a case
+// @route   GET /api/cases/:caseId/evidence/stats
+// @access  Private
+router.get('/:caseId/evidence/stats', verifyToken, async (req, res) => {
+    try {
+        const allDocs = await Evidence.find({ caseId: req.params.caseId });
+        
+        const totalCount = allDocs.length;
+        const verifiedCount = allDocs.filter(d => d.verificationStatus === 'Verified' || d.admissibility === 'Admissible' || d.admissibility === 'admissible' || !d.admissibility).length;
+        const pendingCount = allDocs.filter(d => d.verificationStatus === 'Pending' || d.admissibility === 'Challenged' || d.admissibility === 'challenged').length;
+        const flaggedCount = allDocs.filter(d => d.strength === 'Disputed' || d.strength === 'Tampered' || d.admissibility === 'Inadmissible' || d.admissibility === 'inadmissible').length;
+        const strongCount = allDocs.filter(d => d.strength === 'Strong' || d.strength === 'strong').length;
+        const weakCount = allDocs.filter(d => d.strength === 'Weak' || d.strength === 'weak').length;
+        const recentCount = allDocs.filter(d => Date.now() - new Date(d.uploadedAt || 0).getTime() < 3 * 24 * 3600 * 1000).length;
+
+        res.json({
+            total: totalCount,
+            verified: verifiedCount,
+            pending: pendingCount,
+            flagged: flaggedCount,
+            strong: strongCount,
+            weak: weakCount,
+            recent: recentCount
+        });
+    } catch (error) {
+        console.error('Error fetching evidence stats:', error);
+        res.status(500).json({ error: 'Failed to fetch evidence stats' });
+    }
+});
 
 // @desc    Delete a project
 // @route   DELETE /api/projects/:id
