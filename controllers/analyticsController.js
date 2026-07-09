@@ -127,7 +127,7 @@ export const getAnalytics = async (req, res) => {
 export const getErrorDrillDown = async (req, res) => {
     try {
         const { mode } = req.params;
-        const { range = '7d' } = req.query;
+        const { range = '7d', tool = '' } = req.query;
         const { from, to } = getDateRange(range);
 
         // Mode alias map
@@ -146,9 +146,19 @@ export const getErrorDrillDown = async (req, res) => {
         const modeVariants = modeAliasMap[mode] || [mode];
         const modeMatch = { $in: modeVariants };
 
-        // Fetch raw error documents for this mode
+        // Sub-tool match stage
+        let toolMatch = {};
+        if (tool) {
+            if (tool === 'General') {
+                toolMatch = { activeTool: { $in: [null, undefined, ''] } };
+            } else {
+                toolMatch = { activeTool: tool };
+            }
+        }
+
+        // Fetch raw error documents for this mode (filtered by tool if selected)
         const rawErrorDocs = await ChatSession.aggregate([
-            { $match: { createdAt: { $gte: from, $lte: to }, detectedMode: modeMatch } },
+            { $match: { createdAt: { $gte: from, $lte: to }, detectedMode: modeMatch, ...toolMatch } },
             { $unwind: { path: '$messages', preserveNullAndEmptyArrays: false } },
             { $match: errorMatchStage },
             {
@@ -204,19 +214,24 @@ export const getErrorDrillDown = async (req, res) => {
             .filter(p => p.count > 0)
             .sort((a, b) => b.count - a.count);
 
-        // Tool / sub-feature breakdown
-        const toolBreakdown = {};
-        for (const doc of rawErrorDocs) {
-            const tool = doc.activeTool || 'General';
-            toolBreakdown[tool] = (toolBreakdown[tool] || 0) + doc.errorCount;
-        }
-        const toolStats = Object.entries(toolBreakdown)
-            .map(([tool, count]) => ({ tool, count }))
-            .sort((a, b) => b.count - a.count);
-
-        // Daily error trend for this mode
-        const dailyErrors = await ChatSession.aggregate([
+        // Tool / sub-feature breakdown (always calculated for the entire mode, unfiltered)
+        const toolStatsDocs = await ChatSession.aggregate([
             { $match: { createdAt: { $gte: from, $lte: to }, detectedMode: modeMatch } },
+            { $unwind: { path: '$messages', preserveNullAndEmptyArrays: false } },
+            { $match: errorMatchStage },
+            {
+                $group: {
+                    _id: { $ifNull: ['$activeTool', 'General'] },
+                    count: { $sum: 1 }
+                }
+            },
+            { $sort: { count: -1 } }
+        ]);
+        const toolStats = toolStatsDocs.map(t => ({ tool: t._id, count: t.count }));
+
+        // Daily error trend for this mode (filtered by tool if selected)
+        const dailyErrors = await ChatSession.aggregate([
+            { $match: { createdAt: { $gte: from, $lte: to }, detectedMode: modeMatch, ...toolMatch } },
             { $unwind: { path: '$messages', preserveNullAndEmptyArrays: false } },
             { $match: errorMatchStage },
             {
@@ -230,7 +245,7 @@ export const getErrorDrillDown = async (req, res) => {
             { $sort: { _id: 1 } }
         ]);
 
-        // Recent affected sessions
+        // Recent affected sessions (filtered by tool if selected)
         const recentSessions = rawErrorDocs.slice(0, 15).map(doc => ({
             sessionId: doc.sessionId,
             createdAt: doc.createdAt,
@@ -241,7 +256,7 @@ export const getErrorDrillDown = async (req, res) => {
 
         res.status(200).json({
             success: true,
-            mode, range,
+            mode, range, tool,
             drillDown: {
                 totalErrorInstances: rawErrorDocs.reduce((acc, d) => acc + d.errorCount, 0),
                 affectedSessions: rawErrorDocs.length,
