@@ -408,6 +408,47 @@ route.get("/all", verifyToken, async (req, res) => {
     }
 });
 
+// GET /api/user/blocked - Retrieve blocked users list for the authenticated user
+route.get("/blocked", verifyToken, async (req, res) => {
+    try {
+        const userId = req.user.id || req.user._id;
+        const user = await userModel.findById(userId).populate({
+            path: 'blockedUsers',
+            select: '_id name email avatar username'
+        });
+        if (!user) {
+            return res.status(404).json({ error: "User not found" });
+        }
+        res.json({ success: true, blockedUsers: user.blockedUsers || [] });
+    } catch (err) {
+        console.error('[GET BLOCKED USERS ERROR]', err);
+        res.status(500).json({ error: "Failed to fetch blocked users" });
+    }
+});
+
+// POST /api/user/unblock/:blockedId - Unblock a blocked user
+route.post("/unblock/:blockedId", verifyToken, async (req, res) => {
+    try {
+        const userId = req.user.id || req.user._id;
+        const { blockedId } = req.params;
+
+        const user = await userModel.findById(userId);
+        if (!user) {
+            return res.status(404).json({ error: "User not found" });
+        }
+
+        if (user.blockedUsers) {
+            user.blockedUsers = user.blockedUsers.filter(id => id.toString() !== blockedId.toString());
+            await user.save();
+        }
+
+        res.json({ success: true, message: "User unblocked successfully" });
+    } catch (err) {
+        console.error('[UNBLOCK USER ERROR]', err);
+        res.status(500).json({ error: "Failed to unblock user" });
+    }
+});
+
 // GET /api/user/:id - Retrieve profile details by ID (MUST be after /all to avoid route conflict)
 route.get("/:id", verifyToken, async (req, res) => {
     try {

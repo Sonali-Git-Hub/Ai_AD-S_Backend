@@ -40,6 +40,71 @@ try {
     }
 }
 
+// Helper to count words in a string
+const countWords = (text) => {
+    if (!text) return 0;
+    return text.trim().split(/\s+/).filter(Boolean).length;
+};
+
+// Helper to split long sentences for Chirp TTS models to avoid sentence-too-long errors
+const splitLongSentences = (text, maxSentenceLength = 180) => {
+    if (!text) return "";
+    
+    // Split by sentence delimiters (. ? !), preserving the delimiter
+    const parts = text.split(/([.?!]+)/);
+    
+    let result = [];
+    for (let i = 0; i < parts.length; i += 2) {
+        let sentence = parts[i] || "";
+        const delimiter = parts[i + 1] || "";
+        
+        sentence = sentence.trim();
+        if (!sentence) {
+            if (delimiter) result.push(delimiter);
+            continue;
+        }
+        
+        if (sentence.length <= maxSentenceLength) {
+            result.push(sentence + delimiter);
+        } else {
+            // This sentence is too long! Split it into smaller pieces
+            const words = sentence.split(/\s+/);
+            let subSentences = [];
+            let currentSub = [];
+            let currentLen = 0;
+            
+            for (const word of words) {
+                currentSub.push(word);
+                currentLen += word.length + 1;
+                
+                // Split at clause boundaries (comma, semicolon) or when length limit is reached
+                const isClauseBoundary = /[,;]/.test(word);
+                if (currentLen >= maxSentenceLength || (currentLen >= maxSentenceLength * 0.6 && isClauseBoundary)) {
+                    let subStr = currentSub.join(' ');
+                    // Ensure the sub-sentence ends with a period if it doesn't have any ending punctuation
+                    if (!/[.?!,;]/.test(subStr)) {
+                        subStr += '.';
+                    } else if (isClauseBoundary) {
+                        // Replace clause punctuation with period to ensure Google TTS sees it as a separate sentence
+                        subStr = subStr.replace(/[,;]$/, '.');
+                    }
+                    subSentences.push(subStr);
+                    currentSub = [];
+                    currentLen = 0;
+                }
+            }
+            if (currentSub.length > 0) {
+                subSentences.push(currentSub.join(' ') + delimiter);
+            } else if (subSentences.length > 0) {
+                // Re-append the delimiter to the last sub-sentence
+                subSentences[subSentences.length - 1] += delimiter;
+            }
+            result.push(subSentences.join(' '));
+        }
+    }
+    return result.join(' ');
+};
+
 // Helper to chunk text safely for Google TTS (5000 byte limit)
 const chunkText = (text, maxLength = 2500) => {
     if (!text) return [];
@@ -123,6 +188,11 @@ export const synthesizeSpeech = async (req, res) => {
         const { text, languageCode = 'en-US', gender = 'FEMALE', tone, voiceName: reqVoiceName, pitch = 0, speakingRate = 1.0 } = req.body;
         if (!text) return res.status(400).json({ error: 'Text is required' });
 
+        const wordCount = countWords(text);
+        if (wordCount > 30000) {
+            return res.status(400).json({ error: `Text exceeds the maximum limit of 30,000 words (Current: ${wordCount.toLocaleString()} words)` });
+        }
+
         // Pre-processing for natural pronunciation
         let processedText = text
             .replace(/[,.-]/g, " ")
@@ -132,6 +202,9 @@ export const synthesizeSpeech = async (req, res) => {
             .replace(/\bplz\b/gi, "please")
             .replace(/\s+/g, " ")
             .trim();
+
+        // Split long run-on sentences for safe Chirp 3 HD processing
+        processedText = splitLongSentences(processedText, 180);
 
         const voiceMap = {
             'hi-IN': { 'FEMALE': 'hi-IN-Chirp3-HD-Kore', 'MALE': 'hi-IN-Chirp3-HD-Charon' },
@@ -206,7 +279,15 @@ export const synthesizeFile = async (req, res) => {
             .replace(/\s+/g, " ")
             .trim();
 
+        // Split long run-on sentences for safe Chirp 3 HD processing
+        textToRead = splitLongSentences(textToRead, 180);
+
         if (textToRead.length < 2) return res.status(400).json({ error: 'No readable text found' });
+
+        const wordCount = countWords(textToRead);
+        if (wordCount > 30000) {
+            return res.status(400).json({ error: `Extracted text exceeds the maximum limit of 30,000 words (Current: ${wordCount.toLocaleString()} words)` });
+        }
 
         const isHindi = (textToRead.match(/[\u0900-\u097F]/g) || []).length > 20;
         const chunks = chunkText(textToRead, isHindi ? 1200 : 2500);
