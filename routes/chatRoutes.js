@@ -75,7 +75,7 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
   if (mode === "webSearch") mode = "web_search";
   if (mode === "deepSearch") mode = "DEEP_SEARCH";
   if (mode === "codeWriter") mode = "CODE_WRITER";
-  if (mode === "aiLegal") mode = "LEGAL_TOOLKIT";
+  if (mode === "aiLegal" || mode === "legal" || mode === "LEGAL") mode = "LEGAL_TOOLKIT";
 
   try {
     // 1. LIMIT & CREDIT CHECKS
