@@ -433,29 +433,8 @@ export const createInvoice = async (subscriptionId, clientBillingDetails, gatewa
             currency: 'INR'
         });
 
-        // 6. Generate and Save PDF locally
-        console.log(`[INVOICE] Generating PDF for ${invoiceNumber}...`);
-        let pdfBuffer;
-        try {
-            pdfBuffer = await generateInvoicePdfBuffer(invoice, plan, subscription);
-            
-            const invoicesDir = path.join(__dirname, '..', 'public', 'invoices');
-            if (!fs.existsSync(invoicesDir)) {
-                fs.mkdirSync(invoicesDir, { recursive: true });
-            }
-            
-            const pdfFileName = `${invoiceNumber}.pdf`;
-            const pdfFilePath = path.join(invoicesDir, pdfFileName);
-            fs.writeFileSync(pdfFilePath, pdfBuffer);
-            
-            // Set invoice URL
-            invoice.invoiceUrl = `/invoices/${pdfFileName}`;
-            console.log(`[INVOICE] PDF written locally at: ${pdfFilePath}`);
-        } catch (pdfErr) {
-            logFailure(subscription.paymentId, 'PDF_GENERATION', pdfErr.message);
-            console.error(`[INVOICE WARNING] PDF generation failed, but saving invoice metadata to DB:`, pdfErr.message);
-            invoice.invoiceUrl = null;
-        }
+        // 6. Set invoice URL dynamically pointing to the secure download endpoint (On-demand dynamic PDF generation)
+        invoice.invoiceUrl = `/api/payment/invoice/${subscription._id}`;
 
         // Save invoice to database
         await invoice.save();
@@ -583,20 +562,25 @@ const sendInvoiceEmailWithAttachment = async (user, invoice, plan, subscription,
             </div>
         `;
 
-        // 1. Send Invoice to Customer
-        await resend.emails.send({
+        // 1. Send Invoice to Customer (Optional PDF attachment)
+        const emailParams = {
             from: `AISA™ Billing <${SENDER_EMAIL}>`,
             to: [user.email],
             subject: `🧾 Invoice for AISA™ ${plan.planName} Upgrade - ${invoice.invoiceNumber}`,
             html: emailContent,
-            attachments: [
+        };
+
+        if (pdfBuffer) {
+            emailParams.attachments = [
                 {
                     filename: `${invoice.invoiceNumber}.pdf`,
                     content: pdfBuffer
                 }
-            ]
-        });
-        console.log(`[EMAIL SERVICE] Invoice email with PDF attachment sent to customer: ${user.email}`);
+            ];
+        }
+
+        await resend.emails.send(emailParams);
+        console.log(`[EMAIL SERVICE] Invoice email sent to customer: ${user.email} (Attachment: ${pdfBuffer ? 'Yes' : 'No'})`);
 
         // 2. Send Notification to Admin/Owner
         await resend.emails.send({
