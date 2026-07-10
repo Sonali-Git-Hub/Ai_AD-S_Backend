@@ -411,9 +411,18 @@ export const getBrandProfile = async (req, res) => {
 export const deleteWorkspace = async (req, res) => {
   try {
     const { workspaceId } = req.params;
+    const mongoose = await import('mongoose');
+
+    // Cast to ObjectId for proper matching against ObjectId fields
+    let wsObjectId;
+    try {
+      wsObjectId = new mongoose.Types.ObjectId(workspaceId);
+    } catch (e) {
+      return res.status(400).json({ success: false, message: 'Invalid workspace ID format' });
+    }
 
     // Security: only owner can delete
-    const workspace = await SocialAgentWorkspace.findOne({ _id: workspaceId, userId: req.user.id });
+    const workspace = await SocialAgentWorkspace.findOne({ _id: wsObjectId, userId: req.user.id });
     if (!workspace) return res.status(404).json({ success: false, message: 'Workspace not found or unauthorized' });
 
     // 1. Delete all GCS files under brands/{workspaceId}/
@@ -432,30 +441,31 @@ export const deleteWorkspace = async (req, res) => {
       logger.warn(`[deleteWorkspace] GCS cleanup partial: ${gcsErr.message}`);
     }
 
-    // 2. Delete all MongoDB documents for this workspace
+    // 2. Delete all MongoDB documents for this workspace (use ObjectId for proper matching)
     const GeneratedAsset = (await import('../models/GeneratedAsset.js')).default;
     const GeneratedPost = (await import('../models/GeneratedPost.js')).default;
     const GenerationJob = (await import('../models/GenerationJob.js')).default;
 
-    await Promise.all([
-      BrandProfile.deleteMany({ workspaceId }),
-      ContentCalendar.deleteMany({ workspaceId }),
-      CalendarEntry.deleteMany({ workspaceId }),
-      UploadAsset.deleteMany({ workspaceId }),
-      GeneratedAsset.deleteMany({ workspaceId }),
-      GeneratedPost.deleteMany({ workspaceId }),
-      GenerationJob.deleteMany({ workspaceId }),
-      PlanUsage.deleteMany({ workspaceId }),
-      SocialAgentWorkspace.findByIdAndDelete(workspaceId),
+    const results = await Promise.all([
+      BrandProfile.deleteMany({ workspaceId: wsObjectId }),
+      ContentCalendar.deleteMany({ workspaceId: wsObjectId }),
+      CalendarEntry.deleteMany({ workspaceId: wsObjectId }),
+      UploadAsset.deleteMany({ workspaceId: wsObjectId }),
+      GeneratedAsset.deleteMany({ workspaceId: wsObjectId }),
+      GeneratedPost.deleteMany({ workspaceId: wsObjectId }),
+      GenerationJob.deleteMany({ workspaceId: wsObjectId }),
+      PlanUsage.deleteMany({ workspaceId: wsObjectId }),
+      SocialAgentWorkspace.findByIdAndDelete(wsObjectId),
     ]);
 
-    logger.info(`[deleteWorkspace] Workspace ${workspaceId} fully deleted`);
+    logger.info(`[deleteWorkspace] Workspace ${workspaceId} fully deleted. BrandProfiles removed: ${results[0].deletedCount}`);
     res.json({ success: true, message: 'Brand deleted permanently' });
   } catch (error) {
     logger.error(`[deleteWorkspace] ${error.message}`);
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
 
 /**
  * Content Calendar Upload & Parsing
