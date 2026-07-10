@@ -70,6 +70,7 @@ import socialAgentRoutes from './routes/socialMediaGenerator.routes.js';
 import socialReviewRoutes from './routes/socialAgentReview.routes.js';
 import mediaProxyRoutes from './routes/mediaProxy.routes.js';
 import brandRoutes from './routes/brandFetch.route.js';
+import brandIntelligenceRoutes from './routes/brandIntelligence.routes.js';
 import cashflowRoutes from './routes/cashflowRoutes.js';
 import stockRoutes from './routes/stockRoutes.js';
 import legalToolkitRoutes from './Tools/AI_Legal/legalToolkit.routes.js';
@@ -78,10 +79,12 @@ import precedentsRoutes from './Tools/AI_Legal/routes/precedents.routes.js';
 import friendChatRoutes from './routes/friendChatRoutes.js';
 import chatsRoutes from './routes/chats.js';
 import messagesRoutes from './routes/messages.js';
+import manualPostRoutes from './routes/manualPost.routes.js';
 
 import { startPlanExpiryService } from './services/planExpiryService.js';
 import { verifyToken } from './middleware/authorization.js';
 import { creditMiddleware } from './middleware/creditSystem.js';
+import { contextMiddleware } from './middleware/context.middleware.js';
 
 // End of standard imports
 
@@ -152,6 +155,8 @@ app.use((req, res, next) => {
   };
   next();
 });
+
+app.use(contextMiddleware);
 
 
 // Serve static frontend files from 'public' directory
@@ -238,9 +243,11 @@ app.use('/api/social-agent', socialAgentRoutes);
 app.use('/api/social-agent-review', verifyToken, creditMiddleware, socialReviewRoutes);
 app.use('/api/media', mediaProxyRoutes);
 app.use('/api/brand', brandRoutes);
+app.use('/api/brand-intelligence', brandIntelligenceRoutes);
 app.use('/api/friends', friendChatRoutes);
 app.use('/api/chats', chatsRoutes);
 app.use('/api/messages', messagesRoutes);
+app.use('/api/manual-post', manualPostRoutes);
 app.use('/api/users', userRoute); // Aliased users routes to same user controller
 
 

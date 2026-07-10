@@ -124,14 +124,25 @@ export const parseBrandDocument = async (buffer, mimeType) => {
       return text;
     }
 
-    // Others (Docx, etc)
+    // Direct plain text handle
+    if (mimeType.includes('text/plain') || mimeType.includes('text/')) {
+      console.log('[DocParser] 🔍 Detected plain text format — converting buffer...');
+      const text = buffer.toString('utf-8');
+      console.log(`[DocParser] ✅ Text file parsed | Chars extracted: ${text.length} | Time: ${Date.now() - parseStart}ms`);
+      return text;
+    }
+
+    // Office formats (Word, PowerPoint, Excel, etc)
     if (
       mimeType.includes('officedocument') ||
       mimeType.includes('word') ||
-      mimeType.includes('text/plain') ||
-      mimeType.includes('application/msword')
+      mimeType.includes('presentation') ||
+      mimeType.includes('powerpoint') ||
+      mimeType.includes('msword') ||
+      mimeType.includes('excel') ||
+      mimeType.includes('sheet')
     ) {
-      console.log(`[DocParser] 🔍 Detected Office/Word format — using officeparser...`);
+      console.log(`[DocParser] 🔍 Detected Office format — using officeparser...`);
       const text = await officeparser.parseOfficeAsync(buffer);
       console.log(`[DocParser] ✅ Office doc parsed | Chars extracted: ${text?.length || 0} | Time: ${Date.now() - parseStart}ms`);
       return text;

@@ -316,6 +316,31 @@ export const AskVertexRaw = async (prompt, options = {}) => {
             throw new Error('No AI model initialized. Check GEMINI_API_KEY or GCP_PROJECT_ID in .env');
         }
 
+        // Dynamically inject Brand Memory if workspaceId/userId is present or in context
+        let activeWorkspaceId = options.workspaceId;
+        if (!activeWorkspaceId) {
+            try {
+                const { getActiveWorkspaceId } = await import('../utils/context.js');
+                activeWorkspaceId = getActiveWorkspaceId();
+            } catch (e) {}
+        }
+        if (!activeWorkspaceId && (options.userId || options.user?.id)) {
+            try {
+                const mongoose = (await import('mongoose')).default;
+                const ws = await mongoose.model('SocialAgentWorkspace').findOne({ userId: options.userId || options.user?.id });
+                if (ws) activeWorkspaceId = ws._id.toString();
+            } catch (e) {}
+        }
+        if (activeWorkspaceId) {
+            try {
+                const { getBrandMemoryContext } = await import('./brandMemory.service.js');
+                const brandMemory = await getBrandMemoryContext(activeWorkspaceId);
+                if (brandMemory && !prompt.includes('CENTRALIZED BRAND DNA KNOWLEDGE')) {
+                    prompt = brandMemory + "\n" + prompt;
+                }
+            } catch (e) {}
+        }
+
         let model;
 
         // Always create a fresh, simple model without heavy system instructions
@@ -454,6 +479,7 @@ export const AskVertexRaw = async (prompt, options = {}) => {
                 return response;
             } catch (openAiErr) {
                 logger.error(`[AskVertexRaw] OpenAI fallback failed: ${openAiErr.message}`);
+                throw openAiErr;
             }
         }
 
@@ -473,6 +499,35 @@ export const askVertex = async (prompt, context = null, options = {}) => {
             throw new Error('Google AI services are not initialized: GCP_PROJECT_ID is missing, commented out, or unavailable in the environment configuration.');
         }
         let { systemInstruction, images, documents } = options;
+
+        // Dynamically inject Brand Memory if workspaceId/userId is present or in context
+        let activeWorkspaceId = options.workspaceId;
+        if (!activeWorkspaceId) {
+            try {
+                const { getActiveWorkspaceId } = await import('../utils/context.js');
+                activeWorkspaceId = getActiveWorkspaceId();
+            } catch (e) {}
+        }
+        if (!activeWorkspaceId && (options.userId || options.user?.id)) {
+            try {
+                const mongoose = (await import('mongoose')).default;
+                const ws = await mongoose.model('SocialAgentWorkspace').findOne({ userId: options.userId || options.user?.id });
+                if (ws) activeWorkspaceId = ws._id.toString();
+            } catch (e) {}
+        }
+        if (activeWorkspaceId) {
+            try {
+                const { getBrandMemoryContext } = await import('./brandMemory.service.js');
+                const brandMemory = await getBrandMemoryContext(activeWorkspaceId);
+                if (brandMemory && (!systemInstruction || !systemInstruction.includes('CENTRALIZED BRAND DNA KNOWLEDGE')) && !prompt.includes('CENTRALIZED BRAND DNA KNOWLEDGE')) {
+                    if (systemInstruction) {
+                        systemInstruction = brandMemory + "\n" + systemInstruction;
+                    } else {
+                        prompt = brandMemory + "\n" + prompt;
+                    }
+                }
+            } catch (e) {}
+        }
 
         // Inject Brand Identity if no specific instructions provided
         const currentDate = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short' });

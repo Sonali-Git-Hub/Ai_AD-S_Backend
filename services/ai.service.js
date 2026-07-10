@@ -416,7 +416,9 @@ Maintain any text response outside the JSON block.`;
                 const ragResponse = await vertexService.askVertex(promptWithMemory, labeledRagContext, {
                     userName,
                     systemInstruction: `${ragInstructionWithLink}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}\n\n${legalInstruction}`,
-                    mode: 'RAG'
+                    mode: 'RAG',
+                    userId,
+                    workspaceId
                 });
                 
                 logger.info(`[RAG-Pipeline] ✅ RAG Response Generated Successfully (${ragResponse?.length || 0} chars).`);
@@ -447,7 +449,9 @@ Maintain any text response outside the JSON block.`;
                     const finalSystemInstruction = `${dynamicSystemInstruction}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}\n\n${legalInstruction}`;
                     aiResponse = await openaiService.askOpenAI(promptWithMemory, null, {
                         systemInstruction: finalSystemInstruction,
-                        userName
+                        userName,
+                        userId,
+                        workspaceId
                     });
                 } else if (currentModel && (currentModel.includes('groq') || currentModel.includes('llama'))) {
                     logger.info(`[AI-Service] Routing to Groq (${currentModel})`);
@@ -496,7 +500,9 @@ Maintain any text response outside the JSON block.`;
                         systemInstruction: finalSystemInstruction,
                         mode: mode || 'GENERAL',
                         images,
-                        documents
+                        documents,
+                        userId,
+                        workspaceId
                     });
                 }
 

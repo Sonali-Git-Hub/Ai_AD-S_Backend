@@ -594,3 +594,284 @@ ${siteContext.substring(0, 8000) || 'No main content found.'}`;
     siteContext: siteContext.substring(0, 8000),
   };
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BRAND INTELLIGENCE AGENT — Auto-discover all brand assets from a website
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SOCIAL_DOMAINS = {
+  instagram: ['instagram.com'],
+  twitter: ['twitter.com', 'x.com'],
+  linkedin: ['linkedin.com'],
+  facebook: ['facebook.com', 'fb.com'],
+  youtube: ['youtube.com', 'youtu.be'],
+  tiktok: ['tiktok.com'],
+  pinterest: ['pinterest.com'],
+  github: ['github.com'],
+};
+
+const isSocialUrl = (href) => {
+  if (!href) return null;
+  for (const [platform, domains] of Object.entries(SOCIAL_DOMAINS)) {
+    if (domains.some(d => href.includes(d))) return platform;
+  }
+  return null;
+};
+
+const isDocumentUrl = (href) => {
+  if (!href) return false;
+  return /\.(pdf|docx?|pptx?|xlsx?|pages|key|numbers)(\?.*)?$/i.test(href);
+};
+
+/**
+ * Discovers brand assets automatically from a website URL.
+ * Returns structured assets with confidence scores.
+ * @param {string} websiteUrl - The company website URL
+ * @returns {Promise<Object>} - Discovered assets grouped by category
+ */
+export const discoverBrandAssets = async (websiteUrl) => {
+  const url = normalizeUrl(websiteUrl);
+  console.log(`[AssetAgent] Starting auto-discovery for: ${url}`);
+
+  const discovered = {
+    logos: [],
+    colors: [],
+    fonts: [],
+    images: [],
+    socialProfiles: [],
+    documents: [],
+    favicon: null,
+  };
+
+  let $;
+  let html = '';
+  try {
+    const response = await axios.get(url, {
+      headers: HEADERS,
+      timeout: 15000,
+      maxContentLength: 5 * 1024 * 1024,
+    });
+    html = response.data;
+    $ = cheerio.load(html);
+  } catch (err) {
+    console.error(`[AssetAgent] Failed to fetch ${url}: ${err.message}`);
+    throw new Error(`Cannot reach website: ${err.message}`);
+  }
+
+  // ─── 1. LOGO DISCOVERY ──────────────────────────────────────────────────────
+
+  const logoSelectors = [
+    { sel: 'script[type="application/ld+json"]', type: 'json-ld', confidence: 98 },
+    { sel: 'meta[property="og:logo"]',          attr: 'content',  confidence: 97 },
+    { sel: 'meta[name="twitter:logo"]',          attr: 'content',  confidence: 96 },
+    { sel: 'link[rel="apple-touch-icon"]',       attr: 'href',     confidence: 90 },
+    { sel: 'a[class*="logo"] img',               attr: 'src',      confidence: 93 },
+    { sel: 'a[id*="logo"] img',                  attr: 'src',      confidence: 92 },
+    { sel: '#logo img',                          attr: 'src',      confidence: 91 },
+    { sel: '.logo img',                          attr: 'src',      confidence: 90 },
+    { sel: 'header img[src*="logo" i]',          attr: 'src',      confidence: 89 },
+    { sel: 'nav img[src*="logo" i]',             attr: 'src',      confidence: 88 },
+    { sel: 'img[class*="logo" i]',               attr: 'src',      confidence: 87 },
+    { sel: 'img[id*="logo" i]',                  attr: 'src',      confidence: 86 },
+    { sel: 'img[alt*="logo" i]',                 attr: 'src',      confidence: 85 },
+    { sel: 'img[src*="logo" i]',                 attr: 'src',      confidence: 82 },
+    { sel: 'header img',                         attr: 'src',      confidence: 65 },
+    { sel: 'nav img',                            attr: 'src',      confidence: 60 },
+  ];
+
+  const seenLogoUrls = new Set();
+  for (const { sel, attr, type, confidence } of logoSelectors) {
+    if (type === 'json-ld') {
+      $('script[type="application/ld+json"]').each((_, el) => {
+        try {
+          const data = JSON.parse($(el).html() || '{}');
+          const arr = Array.isArray(data) ? data : [data];
+          for (const item of arr) {
+            const t = item?.['@type']?.toLowerCase?.() || '';
+            if ((t.includes('organization') || t.includes('brand')) && item.logo) {
+              const logoSrc = typeof item.logo === 'string' ? item.logo : item.logo?.url || item.logo?.contentUrl;
+              const absUrl = resolveToAbsolute(logoSrc, url);
+              if (absUrl && !seenLogoUrls.has(absUrl)) {
+                seenLogoUrls.add(absUrl);
+                discovered.logos.push({ url: absUrl, confidence, source: 'JSON-LD Schema.org', label: 'Organization Logo' });
+              }
+            }
+          }
+        } catch { }
+      });
+    } else {
+      $(sel).each((_, el) => {
+        const raw = $(el).attr(attr);
+        const absUrl = resolveToAbsolute(raw, url);
+        if (absUrl && !seenLogoUrls.has(absUrl)) {
+          seenLogoUrls.add(absUrl);
+          discovered.logos.push({ url: absUrl, confidence, source: sel, label: 'Brand Logo' });
+        }
+      });
+    }
+  }
+
+  // ─── 2. FAVICON ─────────────────────────────────────────────────────────────
+
+  const faviconHref =
+    $('link[rel="icon"][sizes="32x32"]').attr('href') ||
+    $('link[rel="icon"][sizes="16x16"]').attr('href') ||
+    $('link[rel="icon"]').attr('href') ||
+    $('link[rel="shortcut icon"]').attr('href') ||
+    '/favicon.ico';
+
+  discovered.favicon = {
+    url: resolveToAbsolute(faviconHref, url),
+    confidence: faviconHref === '/favicon.ico' ? 50 : 85,
+    source: 'link[rel="icon"]',
+    label: 'Favicon',
+  };
+
+  // ─── 3. BRAND COLORS ────────────────────────────────────────────────────────
+
+  const themeColor = $('meta[name="theme-color"]').attr('content');
+  const ogColor = $('meta[property="og:theme-color"]').attr('content');
+  let cssColors = [];
+  try { cssColors = extractColorsFromCSS($); } catch { }
+  let externalCssColors = [];
+  try { externalCssColors = await extractColorsFromExternalCSS($, url); } catch { }
+
+  const colorPriority = [
+    ...(themeColor ? [{ hex: themeColor.toLowerCase(), confidence: 95, source: 'meta[name="theme-color"]' }] : []),
+    ...(ogColor ? [{ hex: ogColor.toLowerCase(), confidence: 93, source: 'og:theme-color' }] : []),
+    ...externalCssColors.slice(0, 3).map(c => ({ hex: c, confidence: 85, source: 'External CSS Variables' })),
+    ...cssColors.slice(0, 5).map(c => ({ hex: c, confidence: 78, source: 'Inline CSS' })),
+  ];
+
+  const seenColors = new Set();
+  for (const item of colorPriority) {
+    if (!item.hex || seenColors.has(item.hex)) continue;
+    seenColors.add(item.hex);
+    discovered.colors.push({ hex: item.hex, confidence: item.confidence, source: item.source, label: `Brand Color` });
+    if (discovered.colors.length >= 6) break;
+  }
+
+  // ─── 4. FONTS ───────────────────────────────────────────────────────────────
+
+  const seenFonts = new Set();
+
+  // Google Fonts links
+  $('link[href*="fonts.googleapis.com"]').each((_, el) => {
+    const href = $(el).attr('href') || '';
+    const familyMatch = href.match(/family=([^&:]+)/i);
+    if (familyMatch) {
+      const fontName = decodeURIComponent(familyMatch[1]).replace(/\+/g, ' ').split('|')[0];
+      if (!seenFonts.has(fontName)) {
+        seenFonts.add(fontName);
+        discovered.fonts.push({ name: fontName, url: href, confidence: 92, source: 'Google Fonts Link', label: fontName });
+      }
+    }
+  });
+
+  // CSS font-family declarations
+  const cssFontRegex = /font-family\s*:\s*['"]?([A-Za-z][A-Za-z0-9 -]+?)['"]?\s*[,;{]/g;
+  const genericFonts = new Set(['sans-serif', 'serif', 'monospace', 'cursive', 'fantasy', 'inherit', 'initial', 'unset', 'system-ui', '-apple-system', 'segoe ui', 'arial', 'helvetica', 'georgia', 'times', 'courier', 'verdana', 'tahoma', 'trebuchet']);
+  $('style').each((_, el) => {
+    const css = $(el).text() || '';
+    let m;
+    const r = new RegExp(cssFontRegex.source, 'gi');
+    while ((m = r.exec(css)) !== null) {
+      const fontName = m[1].trim();
+      if (!genericFonts.has(fontName.toLowerCase()) && !seenFonts.has(fontName) && fontName.length > 2) {
+        seenFonts.add(fontName);
+        discovered.fonts.push({ name: fontName, confidence: 72, source: 'CSS font-family', label: fontName });
+      }
+    }
+  });
+
+  // ─── 5. BRAND IMAGES ────────────────────────────────────────────────────────
+
+  const ogImage = $('meta[property="og:image"]').attr('content');
+  const twitterImage = $('meta[name="twitter:image"]').attr('content');
+
+  if (ogImage) {
+    const absUrl = resolveToAbsolute(ogImage, url);
+    if (absUrl) discovered.images.push({ url: absUrl, confidence: 90, source: 'og:image', label: 'Open Graph Image' });
+  }
+  if (twitterImage && twitterImage !== ogImage) {
+    const absUrl = resolveToAbsolute(twitterImage, url);
+    if (absUrl) discovered.images.push({ url: absUrl, confidence: 88, source: 'twitter:image', label: 'Twitter Card Image' });
+  }
+
+  // Hero section images
+  const heroSelectors = [
+    'header img', '.hero img', '#hero img', 
+    'section.hero img', '[class*="hero"] img',
+    '[class*="banner"] img', '[class*="cover"] img',
+  ];
+  const seenImgUrls = new Set([ogImage, twitterImage].filter(Boolean));
+  for (const sel of heroSelectors) {
+    $(sel).each((_, el) => {
+      const src = $(el).attr('src');
+      const absUrl = resolveToAbsolute(src, url);
+      if (absUrl && !seenImgUrls.has(absUrl) && !absUrl.match(/logo|icon|favicon/i)) {
+        seenImgUrls.add(absUrl);
+        discovered.images.push({ url: absUrl, confidence: 65, source: sel, label: 'Hero / Banner Image' });
+        if (discovered.images.length >= 6) return false;
+      }
+    });
+    if (discovered.images.length >= 6) break;
+  }
+
+  // ─── 6. SOCIAL PROFILES ─────────────────────────────────────────────────────
+
+  const seenSocials = new Set();
+  $('a[href]').each((_, el) => {
+    const href = $(el).attr('href') || '';
+    const platform = isSocialUrl(href);
+    if (platform && !seenSocials.has(platform)) {
+      const absHref = resolveToAbsolute(href, url);
+      // Filter out share links
+      if (!absHref?.includes('/share') && !absHref?.includes('/intent/tweet')) {
+        seenSocials.add(platform);
+        discovered.socialProfiles.push({
+          platform,
+          url: absHref,
+          confidence: 92,
+          source: 'Anchor link',
+          label: platform.charAt(0).toUpperCase() + platform.slice(1),
+        });
+      }
+    }
+  });
+
+  // ─── 7. DOCUMENTS ───────────────────────────────────────────────────────────
+
+  const seenDocUrls = new Set();
+  $('a[href]').each((_, el) => {
+    const href = $(el).attr('href') || '';
+    if (isDocumentUrl(href)) {
+      const absUrl = resolveToAbsolute(href, url);
+      if (absUrl && !seenDocUrls.has(absUrl)) {
+        seenDocUrls.add(absUrl);
+        const ext = href.match(/\.\w+/)?.[0]?.replace('.', '').toUpperCase() || 'DOC';
+        const text = $(el).text().trim() || 'Brand Document';
+        discovered.documents.push({
+          url: absUrl,
+          name: text.substring(0, 80),
+          type: ext,
+          confidence: 85,
+          source: 'Anchor link',
+          label: `${ext} — ${text.substring(0, 40)}`,
+        });
+        if (discovered.documents.length >= 8) return false;
+      }
+    }
+  });
+
+  console.log(`[AssetAgent] Discovery complete for ${url}:`, {
+    logos: discovered.logos.length,
+    colors: discovered.colors.length,
+    fonts: discovered.fonts.length,
+    images: discovered.images.length,
+    socials: discovered.socialProfiles.length,
+    docs: discovered.documents.length,
+  });
+
+  return discovered;
+};
