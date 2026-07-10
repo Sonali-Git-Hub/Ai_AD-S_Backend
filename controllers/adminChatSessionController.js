@@ -72,10 +72,15 @@ export const getChatSessionStats = async (req, res) => {
                         {
                           $or: [
                             { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, '❌'] }, -1] },
-                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Failed'] }, -1] },
-                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'failed'] }, -1] },
-                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Error'] }, -1] },
-                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'error'] }, -1] }
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Error:'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Error :'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'failed to'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Failed to'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Conversion failed'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'conversion failed'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Internal Server Error'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Quota exceeded'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'quota exceeded'] }, -1] }
                           ]
                         }
                       ]
@@ -288,10 +293,15 @@ export const getChatSessions = async (req, res) => {
                         {
                           $or: [
                             { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, '❌'] }, -1] },
-                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Failed'] }, -1] },
-                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'failed'] }, -1] },
-                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Error'] }, -1] },
-                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'error'] }, -1] }
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Error:'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Error :'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'failed to'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Failed to'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Conversion failed'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'conversion failed'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Internal Server Error'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Quota exceeded'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'quota exceeded'] }, -1] }
                           ]
                         }
                       ]
@@ -476,10 +486,15 @@ export const getChatSessionDetail = async (req, res) => {
                         {
                           $or: [
                             { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, '❌'] }, -1] },
-                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Failed'] }, -1] },
-                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'failed'] }, -1] },
-                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Error'] }, -1] },
-                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'error'] }, -1] }
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Error:'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Error :'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'failed to'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Failed to'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Conversion failed'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'conversion failed'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Internal Server Error'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'Quota exceeded'] }, -1] },
+                            { $ne: [{ $indexOfCP: [{ $ifNull: ['$$msg.content', ''] }, 'quota exceeded'] }, -1] }
                           ]
                         }
                       ]

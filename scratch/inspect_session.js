@@ -16,7 +16,7 @@ async function run() {
             out += msg + '\n';
         };
 
-        const sessionIds = ['mowhxni242jkfqne2vx', 'mnokk5g8r5ydtbittc'];
+        const sessionIds = ['mremcscf8jy5c33cdic'];
         for (const sid of sessionIds) {
             log(`\n=========================================`);
             log(`SESSION: ${sid}`);
