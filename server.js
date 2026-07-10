@@ -79,6 +79,7 @@ import precedentsRoutes from './Tools/AI_Legal/routes/precedents.routes.js';
 import friendChatRoutes from './routes/friendChatRoutes.js';
 import chatsRoutes from './routes/chats.js';
 import messagesRoutes from './routes/messages.js';
+import incidentRoutes from './routes/incidentRoutes.js';
 
 import { startPlanExpiryService } from './services/planExpiryService.js';
 import { verifyToken } from './middleware/authorization.js';
@@ -248,6 +249,7 @@ app.use('/api/users', userRoute); // Aliased users routes to same user controlle
 
 // Admin Panel (Admin only)
 app.use('/api/admin', adminRoutes);
+app.use('/api/incidents', incidentRoutes);
 app.use('/admin/invoices-dashboard', invoiceDashboardRoutes);
 
 // Projects
@@ -284,8 +286,49 @@ app.use((req, res) => {
 });
 
 // Global Error Handler
-app.use((err, req, res, next) => {
+app.use(async (err, req, res, next) => {
   console.error("[SERVER ERROR]", err.stack);
+  try {
+    const { reportError } = await import('./services/incidentService.js');
+    
+    // Parse environment details from request header or user agent if available
+    const ua = req.headers['user-agent'] || '';
+    let browser = 'Unknown';
+    let os = 'Unknown';
+    if (ua.includes('Chrome')) browser = 'Chrome';
+    else if (ua.includes('Safari')) browser = 'Safari';
+    else if (ua.includes('Firefox')) browser = 'Firefox';
+    else if (ua.includes('Edge')) browser = 'Edge';
+
+    if (ua.includes('Windows')) os = 'Windows';
+    else if (ua.includes('Mac OS')) os = 'macOS';
+    else if (ua.includes('Linux')) os = 'Linux';
+    else if (ua.includes('Android')) os = 'Android';
+    else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
+
+    let device = 'Desktop';
+    if (/mobile|android|iphone|ipad/i.test(ua)) device = 'Mobile';
+
+    await reportError({
+      errorMessage: err.message || 'Unknown Server Error',
+      stackTrace: err.stack || '',
+      component: 'Backend',
+      apiRoute: req.originalUrl,
+      apiMethod: req.method,
+      errorCode: err.code || '500',
+      statusCode: err.status || 500,
+      userId: req.user?.id || req.user?._id,
+      sessionId: req.body?.sessionId || req.query?.sessionId,
+      environment: process.env.NODE_ENV || 'Development',
+      browser,
+      os,
+      device,
+      payload: req.body,
+      logs: [`Global error handler captured: ${err.message || 'Unknown Server Error'}`]
+    });
+  } catch (captureError) {
+    console.error('[Incident Capture Failed]', captureError);
+  }
   res.status(500).json({ error: 'Internal Server Error' });
 });
 

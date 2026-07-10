@@ -1,6 +1,8 @@
 import ChatSession from '../models/ChatSession.js';
 import User from '../models/User.js';
 import mongoose from 'mongoose';
+import Incident from '../models/Incident.js';
+import ErrorOccurrence from '../models/ErrorOccurrence.js';
 
 // ─── Helper: Date range helper ────────────────────────────────────────────────
 const getDateRange = (range = '7d') => {
@@ -35,12 +37,6 @@ const classifyError = (content) => {
     return { label: 'General Error', color: '#9E9E9E', icon: 'alert-circle' };
 };
 
-const ERROR_KEYWORDS = ['❌', 'Failed', 'failed', 'Error', 'error', 'timeout', 'Timeout', 'Sorry, I', 'unable to'];
-const errorMatchStage = {
-    'messages.role': { $in: ['model', 'assistant'] },
-    $or: ERROR_KEYWORDS.map(kw => ({ 'messages.content': { $regex: kw, $options: 'i' } }))
-};
-
 // ─── GET /api/admin/analytics ─────────────────────────────────────────────────
 export const getAnalytics = async (req, res) => {
     try {
@@ -54,40 +50,91 @@ export const getAnalytics = async (req, res) => {
             { $sort: { count: -1 } }
         ]);
 
-        // 2. Error sessions
-        const errorSessions = await ChatSession.aggregate([
-            { $match: { createdAt: { $gte: from, $lte: to } } },
-            { $unwind: { path: '$messages', preserveNullAndEmptyArrays: false } },
-            { $match: errorMatchStage },
-            { $group: { _id: '$_id', sessionId: { $first: '$sessionId' }, detectedMode: { $first: '$detectedMode' }, errorMessages: { $push: '$messages.content' }, errorCount: { $sum: 1 }, createdAt: { $first: '$createdAt' } } },
+        // 2. Fetch Active Incident IDs only (resolved/closed/ignored are ignored)
+        const activeIncidentDocs = await Incident.find({
+            status: { $in: ['New', 'Open', 'Assigned', 'In Progress', 'Monitoring'] }
+        }).select('_id');
+        const activeIncidentIds = activeIncidentDocs.map(d => d._id);
+
+        // 3. Error sessions corresponding to Active Incidents
+        const errorSessions = await ErrorOccurrence.aggregate([
+            {
+                $match: {
+                    incidentId: { $in: activeIncidentIds },
+                    createdAt: { $gte: from, $lte: to }
+                }
+            },
+            {
+                $lookup: {
+                    from: 'incidents',
+                    localField: 'incidentId',
+                    foreignField: '_id',
+                    as: 'incident'
+                }
+            },
+            { $unwind: '$incident' },
+            {
+                $group: {
+                    _id: '$sessionId',
+                    sessionId: { $first: '$sessionId' },
+                    detectedMode: { $first: '$incident.toolModule' },
+                    errorMessages: { $push: '$errorMessage' },
+                    errorCount: { $sum: 1 },
+                    createdAt: { $first: '$createdAt' }
+                }
+            },
             { $sort: { errorCount: -1 } },
             { $limit: 50 }
         ]);
 
-        // 3. Error by mode
-        const errorByMode = await ChatSession.aggregate([
-            { $match: { createdAt: { $gte: from, $lte: to } } },
-            { $unwind: { path: '$messages', preserveNullAndEmptyArrays: false } },
-            { $match: errorMatchStage },
-            { $group: { _id: { $ifNull: ['$detectedMode', 'NORMAL_CHAT'] }, errorCount: { $sum: 1 }, uniqueSessions: { $addToSet: '$sessionId' } } },
-            { $project: { _id: 1, errorCount: 1, uniqueSessionCount: { $size: '$uniqueSessions' } } },
+        // 4. Error by mode corresponding to Active Incidents
+        const errorByMode = await ErrorOccurrence.aggregate([
+            {
+                $match: {
+                    incidentId: { $in: activeIncidentIds },
+                    createdAt: { $gte: from, $lte: to }
+                }
+            },
+            {
+                $lookup: {
+                    from: 'incidents',
+                    localField: 'incidentId',
+                    foreignField: '_id',
+                    as: 'incident'
+                }
+            },
+            { $unwind: '$incident' },
+            {
+                $group: {
+                    _id: { $ifNull: ['$incident.toolModule', 'NORMAL_CHAT'] },
+                    errorCount: { $sum: 1 },
+                    uniqueSessions: { $addToSet: '$sessionId' }
+                }
+            },
+            {
+                $project: {
+                    _id: 1,
+                    errorCount: 1,
+                    uniqueSessionCount: { $size: '$uniqueSessions' }
+                }
+            },
             { $sort: { errorCount: -1 } }
         ]);
 
-        // 4. Daily trend
+        // 5. Daily trend
         const dailyTrend = await ChatSession.aggregate([
             { $match: { createdAt: { $gte: from, $lte: to } } },
             { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, sessions: { $sum: 1 }, messages: { $sum: { $size: { $ifNull: ['$messages', []] } } } } },
             { $sort: { _id: 1 } }
         ]);
 
-        // 5. Summary
+        // 6. Summary stats
         const totalSessions = await ChatSession.countDocuments({ createdAt: { $gte: from, $lte: to } });
-        const totalErrors = errorSessions.length;
+        const totalErrors = errorSessions.reduce((acc, s) => acc + s.errorCount, 0);
         const errorRate = totalSessions > 0 ? ((totalErrors / totalSessions) * 100).toFixed(1) : 0;
         const newUsers = await User.countDocuments({ createdAt: { $gte: from, $lte: to } });
 
-        // 6. Error categories
+        // 7. Error categories corresponding to Active Incidents
         const errorMessageMap = {};
         for (const session of errorSessions) {
             for (const msg of session.errorMessages) {
@@ -111,7 +158,7 @@ export const getAnalytics = async (req, res) => {
                 summary: { totalSessions, totalErrors, errorRate: parseFloat(errorRate), newUsers, topMode: modeUsage[0]?._id || 'N/A' },
                 modeUsage, errorByMode, dailyTrend, topErrors,
                 recentErrorSessions: errorSessions.slice(0, 10).map(s => ({
-                    sessionId: s.sessionId, mode: s.detectedMode || 'NORMAL_CHAT',
+                    sessionId: s.sessionId || 'Guest Session', mode: s.detectedMode || 'NORMAL_CHAT',
                     errorCount: s.errorCount, createdAt: s.createdAt
                 }))
             }
@@ -123,7 +170,6 @@ export const getAnalytics = async (req, res) => {
 };
 
 // ─── GET /api/admin/analytics/errors/:mode ────────────────────────────────────
-// Drill-down: Detailed error breakdown for a specific card / mode
 export const getErrorDrillDown = async (req, res) => {
     try {
         const { mode } = req.params;
@@ -144,32 +190,51 @@ export const getErrorDrillDown = async (req, res) => {
             'RAG': ['RAG', 'rag'],
         };
         const modeVariants = modeAliasMap[mode] || [mode];
-        const modeMatch = { $in: modeVariants };
 
-        // Sub-tool match stage
+        // Retrieve Active Incident IDs matching the mode variant
+        const activeIncidentDocs = await Incident.find({
+            toolModule: { $in: modeVariants },
+            status: { $in: ['New', 'Open', 'Assigned', 'In Progress', 'Monitoring'] }
+        }).select('_id');
+        const activeIncidentIds = activeIncidentDocs.map(d => d._id);
+
+        // Sub-tool filter matching
         let toolMatch = {};
         if (tool) {
             if (tool === 'General') {
-                toolMatch = { activeTool: { $in: [null, undefined, ''] } };
+                toolMatch = { 'incident.toolModule': { $in: modeVariants } };
             } else {
-                toolMatch = { activeTool: tool };
+                toolMatch = { 'incident.toolModule': tool };
             }
         }
 
-        // Fetch raw error documents for this mode (filtered by tool if selected)
-        const rawErrorDocs = await ChatSession.aggregate([
-            { $match: { createdAt: { $gte: from, $lte: to }, detectedMode: modeMatch, ...toolMatch } },
-            { $unwind: { path: '$messages', preserveNullAndEmptyArrays: false } },
-            { $match: errorMatchStage },
+        // Fetch raw error occurrences corresponding to Active Incidents
+        const rawErrorDocs = await ErrorOccurrence.aggregate([
+            {
+                $match: {
+                    incidentId: { $in: activeIncidentIds },
+                    createdAt: { $gte: from, $lte: to }
+                }
+            },
+            {
+                $lookup: {
+                    from: 'incidents',
+                    localField: 'incidentId',
+                    foreignField: '_id',
+                    as: 'incident'
+                }
+            },
+            { $unwind: '$incident' },
+            { $match: toolMatch },
             {
                 $group: {
-                    _id: '$_id',
+                    _id: '$sessionId',
                     sessionId: { $first: '$sessionId' },
                     createdAt: { $first: '$createdAt' },
-                    detectedMode: { $first: '$detectedMode' },
-                    activeTool: { $first: '$activeTool' },
+                    detectedMode: { $first: '$incident.toolModule' },
+                    activeTool: { $first: '$incident.apiRoute' },
                     userId: { $first: '$userId' },
-                    errorMsgs: { $push: '$messages.content' },
+                    errorMsgs: { $push: '$errorMessage' },
                     errorCount: { $sum: 1 }
                 }
             },
@@ -196,11 +261,11 @@ export const getErrorDrillDown = async (req, res) => {
                     }
                 }
                 if (!patternSessions[label]) patternSessions[label] = new Set();
-                patternSessions[label].add(doc.sessionId);
+                patternSessions[label].add(doc.sessionId || 'Guest Session');
             }
         }
 
-        // Build pattern breakdown (all classified patterns + general)
+        // Build pattern breakdown
         const allPatterns = [...ERROR_PATTERNS, { label: 'General Error', color: '#9E9E9E', icon: 'alert-circle' }];
         const patterns = allPatterns
             .map(p => ({
@@ -214,14 +279,26 @@ export const getErrorDrillDown = async (req, res) => {
             .filter(p => p.count > 0)
             .sort((a, b) => b.count - a.count);
 
-        // Tool / sub-feature breakdown (always calculated for the entire mode, unfiltered)
-        const toolStatsDocs = await ChatSession.aggregate([
-            { $match: { createdAt: { $gte: from, $lte: to }, detectedMode: modeMatch } },
-            { $unwind: { path: '$messages', preserveNullAndEmptyArrays: false } },
-            { $match: errorMatchStage },
+        // Tool / sub-feature breakdown matching Active Incidents only
+        const toolStatsDocs = await ErrorOccurrence.aggregate([
+            {
+                $match: {
+                    incidentId: { $in: activeIncidentIds },
+                    createdAt: { $gte: from, $lte: to }
+                }
+            },
+            {
+                $lookup: {
+                    from: 'incidents',
+                    localField: 'incidentId',
+                    foreignField: '_id',
+                    as: 'incident'
+                }
+            },
+            { $unwind: '$incident' },
             {
                 $group: {
-                    _id: { $ifNull: ['$activeTool', 'General'] },
+                    _id: { $ifNull: ['$incident.toolModule', 'General'] },
                     count: { $sum: 1 }
                 }
             },
@@ -229,11 +306,14 @@ export const getErrorDrillDown = async (req, res) => {
         ]);
         const toolStats = toolStatsDocs.map(t => ({ tool: t._id, count: t.count }));
 
-        // Daily error trend for this mode (filtered by tool if selected)
-        const dailyErrors = await ChatSession.aggregate([
-            { $match: { createdAt: { $gte: from, $lte: to }, detectedMode: modeMatch, ...toolMatch } },
-            { $unwind: { path: '$messages', preserveNullAndEmptyArrays: false } },
-            { $match: errorMatchStage },
+        // Daily error trend for active incidents
+        const dailyErrors = await ErrorOccurrence.aggregate([
+            {
+                $match: {
+                    incidentId: { $in: activeIncidentIds },
+                    createdAt: { $gte: from, $lte: to }
+                }
+            },
             {
                 $group: {
                     _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
@@ -245,9 +325,9 @@ export const getErrorDrillDown = async (req, res) => {
             { $sort: { _id: 1 } }
         ]);
 
-        // Recent affected sessions (filtered by tool if selected)
+        // Recent affected sessions
         const recentSessions = rawErrorDocs.slice(0, 15).map(doc => ({
-            sessionId: doc.sessionId,
+            sessionId: doc.sessionId || 'Guest Session',
             createdAt: doc.createdAt,
             errorCount: doc.errorCount,
             activeTool: doc.activeTool || 'General',
