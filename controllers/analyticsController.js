@@ -3,6 +3,7 @@ import User from '../models/User.js';
 import mongoose from 'mongoose';
 import Incident from '../models/Incident.js';
 import ErrorOccurrence from '../models/ErrorOccurrence.js';
+import { cacheGet, cacheSet } from '../utils/adminCache.js';
 
 // ─── Helper: Date range helper ────────────────────────────────────────────────
 const getDateRange = (range = '7d') => {
@@ -41,6 +42,31 @@ const classifyError = (content) => {
 export const getAnalytics = async (req, res) => {
     try {
         const { range = '7d' } = req.query;
+        const cacheKey = `analytics:${range}`;
+
+        // ── Cache check (stale-while-revalidate) ──────────────────────────────
+        const cached = cacheGet(cacheKey);
+        if (cached.hit) {
+            // Return cached data immediately
+            res.status(200).json({ success: true, range, analytics: cached.data, cached: true });
+            // If stale → silently refresh in background
+            if (cached.stale) {
+                runAnalyticsQuery(range).then(data => cacheSet(cacheKey, data, 300, 150)).catch(console.error);
+            }
+            return;
+        }
+        // ── Cache miss → run full query ───────────────────────────────────────
+        const data = await runAnalyticsQuery(range);
+        cacheSet(cacheKey, data, 300, 150); // cache 5 min, fresh for 2.5 min
+        res.status(200).json({ success: true, range, analytics: data, cached: false });
+    } catch (error) {
+        console.error('[getAnalytics Error]', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+/** The actual DB aggregation — extracted so it can run in background too */
+const runAnalyticsQuery = async (range) => {
         const { from, to } = getDateRange(range);
 
         // 1. Mode usage
@@ -152,28 +178,44 @@ export const getAnalytics = async (req, res) => {
             .map(([category, count]) => ({ category, count }))
             .sort((a, b) => b.count - a.count);
 
-        res.status(200).json({
-            success: true, range,
-            analytics: {
-                summary: { totalSessions, totalErrors, errorRate: parseFloat(errorRate), newUsers, topMode: modeUsage[0]?._id || 'N/A' },
-                modeUsage, errorByMode, dailyTrend, topErrors,
-                recentErrorSessions: errorSessions.slice(0, 10).map(s => ({
-                    sessionId: s.sessionId || 'Guest Session', mode: s.detectedMode || 'NORMAL_CHAT',
-                    errorCount: s.errorCount, createdAt: s.createdAt
-                }))
-            }
-        });
-    } catch (error) {
-        console.error('[getAnalytics Error]', error);
-        res.status(500).json({ success: false, message: error.message });
-    }
+        return {
+            summary: { totalSessions, totalErrors, errorRate: parseFloat(errorRate), newUsers, topMode: modeUsage[0]?._id || 'N/A' },
+            modeUsage, errorByMode, dailyTrend, topErrors,
+            recentErrorSessions: errorSessions.slice(0, 10).map(s => ({
+                sessionId: s.sessionId || 'Guest Session', mode: s.detectedMode || 'NORMAL_CHAT',
+                errorCount: s.errorCount, createdAt: s.createdAt
+            }))
+        };
 };
 
-// ─── GET /api/admin/analytics/errors/:mode ────────────────────────────────────
+
+// ── GET /api/admin/analytics/errors/:mode ──────────────────────────────────────────────
 export const getErrorDrillDown = async (req, res) => {
     try {
         const { mode } = req.params;
         const { range = '7d', tool = '' } = req.query;
+        const cacheKey = `drilldown:${mode}:${range}:${tool}`;
+
+        // ── Cache check (stale-while-revalidate) ──────────────────────────────
+        const cached = cacheGet(cacheKey);
+        if (cached.hit) {
+            res.status(200).json({ success: true, mode, range, tool, drillDown: cached.data, cached: true });
+            if (cached.stale) {
+                runDrillDownQuery(mode, range, tool).then(d => cacheSet(cacheKey, d, 180, 90)).catch(console.error);
+            }
+            return;
+        }
+        // ── Cache miss ───────────────────────────────────────────────────────────────────────────
+        const drillDown = await runDrillDownQuery(mode, range, tool);
+        cacheSet(cacheKey, drillDown, 180, 90); // 3 min cache, fresh for 90 sec
+        res.status(200).json({ success: true, mode, range, tool, drillDown, cached: false });
+    } catch (error) {
+        console.error('[getErrorDrillDown Error]', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+const runDrillDownQuery = async (mode, range, tool = '') => {
         const { from, to } = getDateRange(range);
 
         // Mode alias map
@@ -235,6 +277,13 @@ export const getErrorDrillDown = async (req, res) => {
                     activeTool: { $first: '$incident.apiRoute' },
                     userId: { $first: '$userId' },
                     errorMsgs: { $push: '$errorMessage' },
+                    stackTrace: { $first: '$stackTrace' },
+                    breadcrumbs: { $first: '$breadcrumbs' },
+                    os: { $first: '$os' },
+                    browser: { $first: '$browser' },
+                    device: { $first: '$device' },
+                    apiRoute: { $first: '$apiRoute' },
+                    statusCode: { $first: '$statusCode' },
                     errorCount: { $sum: 1 }
                 }
             },
@@ -325,29 +374,78 @@ export const getErrorDrillDown = async (req, res) => {
             { $sort: { _id: 1 } }
         ]);
 
-        // Recent affected sessions
-        const recentSessions = rawErrorDocs.slice(0, 15).map(doc => ({
-            sessionId: doc.sessionId || 'Guest Session',
-            createdAt: doc.createdAt,
-            errorCount: doc.errorCount,
-            activeTool: doc.activeTool || 'General',
-            topError: (doc.errorMsgs[0] || '').replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 200)
-        }));
+        // ── Enrich recent sessions with user, chat session, and telemetry ──────
+        const recentRaw = rawErrorDocs.slice(0, 15);
+        const sessionIds = recentRaw.map(d => d.sessionId).filter(Boolean);
+        const userIds    = recentRaw.map(d => d.userId).filter(Boolean);
 
-        res.status(200).json({
-            success: true,
-            mode, range, tool,
-            drillDown: {
-                totalErrorInstances: rawErrorDocs.reduce((acc, d) => acc + d.errorCount, 0),
-                affectedSessions: rawErrorDocs.length,
-                patterns,
-                toolStats,
-                dailyErrors,
-                recentSessions
-            }
+        // Fetch ChatSession records in bulk
+        const chatSessions = await ChatSession.find({ sessionId: { $in: sessionIds } })
+            .select('sessionId title detectedMode userId guestId messages')
+            .lean();
+        const chatSessionMap = {};
+        for (const cs of chatSessions) chatSessionMap[cs.sessionId] = cs;
+
+        // Collect extra userIds from ChatSession records
+        const allUserIds = [...new Set([
+            ...userIds,
+            ...chatSessions.map(cs => cs.userId?.toString()).filter(Boolean)
+        ])];
+
+        // Fetch User records in bulk
+        const users = allUserIds.length > 0
+            ? await User.find({ _id: { $in: allUserIds } }).select('_id name email avatar').lean()
+            : [];
+        const userMap = {};
+        for (const u of users) userMap[u._id.toString()] = u;
+
+        // Build enriched recentSessions
+        const recentSessions = recentRaw.map(doc => {
+            const chatSession = chatSessionMap[doc.sessionId] || null;
+            const userId = doc.userId || chatSession?.userId?.toString() || null;
+            const user = userId ? userMap[userId] || null : null;
+            const topError = (doc.errorMsgs[0] || '').replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 200);
+            // Trim conversation to last 30 messages
+            const conversation = (chatSession?.messages || []).slice(-30).map(m => ({
+                role: m.role,
+                content: (m.content || '').substring(0, 800),
+                timestamp: m.timestamp
+            }));
+
+            return {
+                sessionId:    doc.sessionId || null,
+                createdAt:    doc.createdAt,
+                errorCount:   doc.errorCount,
+                activeTool:   doc.activeTool || 'General',
+                topError,
+                stackTrace:   doc.stackTrace || null,
+                breadcrumbs:  doc.breadcrumbs || [],
+                os:           doc.os || null,
+                browser:      doc.browser || null,
+                device:       doc.device || null,
+                apiRoute:     doc.apiRoute || null,
+                statusCode:   doc.statusCode || null,
+                // Session info
+                sessionTitle: chatSession?.title || (doc.sessionId ? 'Unnamed Session' : 'Guest / API Session'),
+                detectedMode: doc.detectedMode || chatSession?.detectedMode || 'NORMAL_CHAT',
+                isGuest:      !chatSession?.userId,
+                guestId:      chatSession?.guestId || null,
+                conversation,
+                // User info
+                user: user ? {
+                    name:   user.name,
+                    email:  user.email,
+                    avatar: user.avatar
+                } : null
+            };
         });
-    } catch (error) {
-        console.error('[getErrorDrillDown Error]', error);
-        res.status(500).json({ success: false, message: error.message });
-    }
+
+        return {
+            totalErrorInstances: rawErrorDocs.reduce((acc, d) => acc + d.errorCount, 0),
+            affectedSessions: rawErrorDocs.length,
+            patterns,
+            toolStats,
+            dailyErrors,
+            recentSessions
+        };
 };
