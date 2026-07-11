@@ -34,7 +34,8 @@ STRICT EXTRACTION RULES & OBJECTIVE:
 3. PRODUCTS & SERVICES: Products and services list must come directly from the content. If the brand sells clothing, extract clothing categories rather than technology products.
 4. AUDIENCE & KEYWORDS: Target audience and SEO keywords must be inferred and extracted directly from headings, categories, product names, metadata, and page content.
 5. COMPETITORS: Competitors must be inferred based on the actual industry and market of the brand (e.g. real brands in the same space), not placeholder names like "Competitor1".
-6. INTERNAL VALIDATION: Perform an internal consistency check before writing the JSON. Verify that Industry, Products, Services, Target Audience, Keywords, and Competitors are all consistent with each other. If inconsistencies are found, prioritize actual content findings.
+6. SPARSE CONTENT FALLBACK: If the crawled website content is empty, sparse, or fails to fetch (e.g., due to bot blocking), you MUST analyze the website URL / domain name itself to infer the brand and industry. For example: savana.com -> Fashion, apparel, clothing; decathlon.com -> Sports, fitness; standardchartered.com -> Finance, banking. Never default to "Technology & SaaS" or "Customer Experience Technology" templates if the domain/URL suggests a completely different industry!
+7. INTERNAL VALIDATION: Perform an internal consistency check before writing the JSON. Verify that Industry, Products, Services, Target Audience, Keywords, and Competitors are all consistent with each other. If inconsistencies are found, prioritize actual content findings.
 
 ═══════════════════════════════════════════════════
 CONTENT TO ANALYZE:
