@@ -340,12 +340,17 @@ Do NOT output markdown wrappers or code blocks. Just return raw JSON.
       label: 'Favicon'
     } : (scrapedData?.favicon || null);
 
-    const colors = Object.entries(structured.colors || {}).map(([key, val]) => ({
-      hex: val.hex,
-      label: key.charAt(0).toUpperCase() + key.slice(1) + ' Color',
-      confidence: val.confidence || 95,
-      source: val.source || 'Auto'
-    })).filter(c => c.hex);
+    const colors = Object.entries(structured.colors || {}).map(([key, val]) => {
+      if (!val) return null;
+      const hex = typeof val === 'object' ? val.hex : (typeof val === 'string' ? val : null);
+      if (!hex) return null;
+      return {
+        hex: hex,
+        label: key.charAt(0).toUpperCase() + key.slice(1) + ' Color',
+        confidence: typeof val === 'object' ? (val.confidence || 95) : 95,
+        source: typeof val === 'object' ? (val.source || 'Auto') : 'Auto'
+      };
+    }).filter(c => c !== null && c.hex);
 
     const fonts = Object.entries(structured.typography || {}).map(([key, val]) => ({
       name: val.name,
