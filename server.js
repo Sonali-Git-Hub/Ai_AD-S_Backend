@@ -14,6 +14,7 @@ import cookieParser from "cookie-parser";
 import emailVerification from "./routes/emailVerification.js"
 import userRoute from './routes/user.js'
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { initSocket } from './utils/socket.js';
 import * as stockService from './services/stockService.js';
@@ -21,7 +22,6 @@ import * as stockService from './services/stockService.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-import fs from 'fs';
 const logFile = fs.createWriteStream(path.join(__dirname, 'server_output.log'), { flags: 'a' });
 const originalLog = console.log;
 const originalError = console.error;
@@ -63,6 +63,7 @@ import subscriptionRoutes from './routes/subscriptionRoutes.js';
 import paymentRoutes from './routes/paymentRoutes.js';
 import dataRoutes from './routes/dataRoutes.js';
 import magicEditRoutes from './routes/magicEdit.routes.js';
+import invoiceDashboardRoutes from './routes/invoiceDashboardRoutes.js';
 import legalRoutes from './Tools/AI_Legal/routes/legalPages.routes.js';
 import intentRoutes from './routes/intentRoutes.js';
 import aiAdAgentRoutes from './routes/aiAdAgent.routes.js';
@@ -80,6 +81,7 @@ import friendChatRoutes from './routes/friendChatRoutes.js';
 import chatsRoutes from './routes/chats.js';
 import messagesRoutes from './routes/messages.js';
 import manualPostRoutes from './routes/manualPost.routes.js';
+import incidentRoutes from './routes/incidentRoutes.js';
 
 import { startPlanExpiryService } from './services/planExpiryService.js';
 import { verifyToken } from './middleware/authorization.js';
@@ -254,6 +256,8 @@ app.use('/api/users', userRoute); // Aliased users routes to same user controlle
 
 // Admin Panel (Admin only)
 app.use('/api/admin', adminRoutes);
+app.use('/api/incidents', incidentRoutes);
+app.use('/admin/invoices-dashboard', invoiceDashboardRoutes);
 
 // Projects
 app.use('/api/projects', projectRoutes);
@@ -289,10 +293,62 @@ app.use((req, res) => {
 });
 
 // Global Error Handler
-app.use((err, req, res, next) => {
+app.use(async (err, req, res, next) => {
   console.error("[SERVER ERROR]", err.stack);
+  try {
+    const { reportError } = await import('./services/incidentService.js');
+    
+    // Parse environment details from request header or user agent if available
+    const ua = req.headers['user-agent'] || '';
+    let browser = 'Unknown';
+    let os = 'Unknown';
+    if (ua.includes('Chrome')) browser = 'Chrome';
+    else if (ua.includes('Safari')) browser = 'Safari';
+    else if (ua.includes('Firefox')) browser = 'Firefox';
+    else if (ua.includes('Edge')) browser = 'Edge';
+
+    if (ua.includes('Windows')) os = 'Windows';
+    else if (ua.includes('Mac OS')) os = 'macOS';
+    else if (ua.includes('Linux')) os = 'Linux';
+    else if (ua.includes('Android')) os = 'Android';
+    else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
+
+    let device = 'Desktop';
+    if (/mobile|android|iphone|ipad/i.test(ua)) device = 'Mobile';
+
+    await reportError({
+      errorMessage: err.message || 'Unknown Server Error',
+      stackTrace: err.stack || '',
+      component: 'Backend',
+      apiRoute: req.originalUrl,
+      apiMethod: req.method,
+      errorCode: err.code || '500',
+      statusCode: err.status || 500,
+      userId: req.user?.id || req.user?._id,
+      sessionId: req.body?.sessionId || req.query?.sessionId,
+      environment: process.env.NODE_ENV || 'Development',
+      browser,
+      os,
+      device,
+      payload: req.body,
+      logs: [`Global error handler captured: ${err.message || 'Unknown Server Error'}`]
+    });
+  } catch (captureError) {
+    console.error('[Incident Capture Failed]', captureError);
+  }
   res.status(500).json({ error: 'Internal Server Error' });
 });
+
+// Ensure public/invoices exists
+try {
+  const invoicesDir = path.join(__dirname, 'public', 'invoices');
+  if (!fs.existsSync(invoicesDir)) {
+    fs.mkdirSync(invoicesDir, { recursive: true });
+    console.log("✅ Created public/invoices directory for PDF storage.");
+  }
+} catch (e) {
+  console.error("❌ Failed to create public/invoices directory:", e.message);
+}
 
 // Start listening
 const server = app.listen(PORT, () => {
@@ -379,47 +435,28 @@ io.on('connection', (socket) => {
             return socket.emit('historical_data_response', { historical });
         }
 
-        // 2. Check user's credit balance
-        const User = (await import('./models/User.js')).default;
-        const user = await User.findById(userId);
-        if (!user) {
-            return socket.emit('historical_data_response', { error: 'User not found' });
-        }
-
-        const cost = 5; // Historical Chart cost is 5 credits
-        if (user.credits < cost) {
+        // 2. Check user's plan quota
+        const { checkQuota } = await import('./services/subscriptionService.js');
+        const quotaCheck = await checkQuota(userId, 'cashflow');
+        if (!quotaCheck.allowed) {
             return socket.emit('historical_data_response', {
-                error: 'Insufficient credits',
-                code: 'OUT_OF_CREDITS',
-                required: cost,
-                available: user.credits
+                error: quotaCheck.reason,
+                code: quotaCheck.code || 'PLAN_RESTRICTED',
+                planKey: quotaCheck.planKey
             });
         }
 
-        // 3. Fetch data first to make sure it succeeds before charging
+        // 3. Fetch data first
         const historical = await stockService.getHistorical(symbol);
 
-        // 4. Deduct credits and log
-        user.credits -= cost;
-        await user.save();
-
-        const CreditLog = (await import('./models/CreditLog.js')).default;
-        await CreditLog.create({
-            userId: user._id,
-            action: 'ai_cashflow',
-            description: 'AISA CashFlow Explorer (Historical Tab Access)',
-            credits: -cost,
-            balanceAfter: user.credits
-        });
-
-        // 5. Save unlock record
+        // 4. Save unlock record
         await UnlockedStockTab.findOneAndUpdate(
             { userId, symbol: uppercaseSymbol, tab: tabName },
             { createdAt: new Date() },
             { upsert: true, new: true }
         );
 
-        console.log(`[Socket] Deducted ${cost} credits and marked tab '${tabName}' unlocked for stock ${uppercaseSymbol} (User: ${userId})`);
+        console.log(`[Socket] Marked tab '${tabName}' unlocked for stock ${uppercaseSymbol} under quota verification (User: ${userId})`);
         socket.emit('historical_data_response', { historical });
     } catch (error) {
         console.error(`[Socket] request_historical error:`, error.message);

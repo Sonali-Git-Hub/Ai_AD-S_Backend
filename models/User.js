@@ -169,7 +169,23 @@ const userSchema = new mongoose.Schema({
     cookiePolicyAcceptedAt: { type: Date },
     termsVersion: { type: String, default: '1.0' },
     privacyVersion: { type: String, default: '1.0' },
-    cookiePolicyVersion: { type: String, default: '1.0' }
+    cookiePolicyVersion: { type: String, default: '1.0' },
+    billingDetails: {
+        companyName: { type: String, default: '' },
+        billingName: { type: String, default: '' },
+        gstin: { type: String, default: '' },
+        addressLine1: { type: String, default: '' },
+        city: { type: String, default: '' },
+        state: { type: String, default: '' },
+        postalCode: { type: String, default: '' },
+        country: { type: String, default: 'IN' }
+    },
+    // Delete Account OTP flow fields
+    deleteAccountOtp: { type: String, default: null },
+    deleteAccountOtpExpires: { type: Date, default: null },
+    deleteAccountOtpAttempts: { type: Number, default: 0 },
+    deleteAccountOtpVerified: { type: Boolean, default: false },
+    deleteAccountOtpVerifiedAt: { type: Date, default: null }
 }, { timestamps: true });
 
 export default mongoose.model('User', userSchema);

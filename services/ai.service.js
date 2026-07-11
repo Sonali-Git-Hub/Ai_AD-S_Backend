@@ -346,8 +346,21 @@ Maintain any text response outside the JSON block.`;
             }
 
             const promptWithMemory = buildMemoryPrompt(message);
+            let finalSystemInstruction = dynamicSystemInstruction;
+            if (userLanguage) {
+                let langContext = "";
+                if (userLanguage === 'Hindi' || userLanguage === 'Devanagari') {
+                    langContext = "MANDATORY: Respond ENTIRELY in formal Hindi (Devanagari script). Use 'Simple Hindi + English term in brackets' for technical legal concepts (e.g., 'अनुबंध (Contract)', 'शपथ पत्र (Affidavit)').";
+                } else if (userLanguage === 'Hinglish') {
+                    langContext = "MANDATORY: Respond in conversational but accurate Hinglish. Maintain legal precision (e.g., 'Aapka contract void hai because isme consideration missing hai').";
+                } else {
+                    langContext = `MANDATORY: Respond in professional English. Match the script and tongue of the user. (Target: ${userLanguage})`;
+                }
+                finalSystemInstruction = `${dynamicSystemInstruction}\n\n${langSwitchRule}\n\n### LANGUAGE RULE: ${langContext}`;
+            }
+
             const vertexResponse = await vertexService.askVertex(promptWithMemory, combinedContext || activeDocContent, {
-                systemInstruction: dynamicSystemInstruction,
+                systemInstruction: finalSystemInstruction,
                 mode,
                 images,
                 documents,
@@ -451,7 +464,8 @@ Maintain any text response outside the JSON block.`;
                         systemInstruction: finalSystemInstruction,
                         userName,
                         userId,
-                        workspaceId
+                        workspaceId,
+                        history: combinedHistory
                     });
                 } else if (currentModel && (currentModel.includes('groq') || currentModel.includes('llama'))) {
                     logger.info(`[AI-Service] Routing to Groq (${currentModel})`);
@@ -502,7 +516,8 @@ Maintain any text response outside the JSON block.`;
                         images,
                         documents,
                         userId,
-                        workspaceId
+                        workspaceId,
+                        history: combinedHistory
                     });
                 }
 
@@ -537,6 +552,16 @@ Maintain any text response outside the JSON block.`;
         if (finalResponseData.text && (mode === 'LEGAL_TOOLKIT' || legalInstruction)) {
             let cleanText = finalResponseData.text.trim();
 
+            // Strip system headers, greetings, and active tool tags if present in free legal chat
+            if (mode === 'LEGAL_TOOLKIT' && (!classification || classification.intent === 'legal_free_chat')) {
+                cleanText = cleanText.replace(/^\*?\*?\[ACTIVE TOOL:[^\]]*\]\*?\*?\s*/gmi, '');
+                cleanText = cleanText.replace(/^\*?\*?CURRENT DATE & TIME:\*?\*?\s*\r?\n[^\r\n]*\r?\n?/mi, '');
+                cleanText = cleanText.replace(/^\*?\*?USER IDENTIFICATION:\*?\*?\s*\r?\n[^\r\n]*\r?\n?/mi, '');
+                cleanText = cleanText.replace(/^\[System Context[^\]]*\]\s*/gmi, '');
+                cleanText = cleanText.replace(/^Hello\s+[a-zA-Z0-9_\-\s]+,?\s*(here is a|here is)?\s*/mi, '');
+                cleanText = cleanText.replace(/^\*?\*?AI CASE REPORT\*?\*?\s*/mi, '');
+            }
+
             // 1. Strip redundant disclaimers/hallucinated warnings anywhere in text (case-insensitive)
             // This catches "DISCLAIMER:", "NOTE:", "⚠️", etc. at start or end
             const disclaimerKeywords = [
@@ -554,8 +579,9 @@ Maintain any text response outside the JSON block.`;
             const headerHallucinationRegex = /^(⚠️|🚨)?[ \t]*(IMPORTANT|DISCLAIMER|NOTICE|WARNING):.*?\n+/i;
             cleanText = cleanText.replace(headerHallucinationRegex, '').trim();
 
-            // 3. Append centralized disclaimer ONLY if no disclaimer was found in the text
-            if (!hasExistingDisclaimer && LEGAL_DISCLAIMER) {
+            // 3. Append centralized disclaimer ONLY if no disclaimer was found in the text and it is the first message (no history)
+            const isFirstMessage = !combinedHistory || combinedHistory.length === 0;
+            if (isFirstMessage && !hasExistingDisclaimer && LEGAL_DISCLAIMER) {
                 // Ensure there's a clean break
                 cleanText = cleanText + '\n\n' + LEGAL_DISCLAIMER.trim();
             }
