@@ -27,6 +27,16 @@ ${brandHint} ${industryHint} ${toneHint} ${colorHint} ${regionHint}
 SOURCE TYPE: ${sourceType}
 
 ═══════════════════════════════════════════════════
+STRICT EXTRACTION RULES & OBJECTIVE:
+═══════════════════════════════════════════════════
+1. NO PLACEHOLDERS: Generate Brand Intelligence based ONLY on the actual content found in the provided text. Never return placeholder/generic text like "Innovative technology solutions", "Customer experience", "Global leader", "Cutting-edge technology" unless those statements explicitly exist in the content.
+2. ACCURATE INDUSTRY: Industry classification must be highly accurate. For example: Fashion website -> Fashion, Restaurant -> Food, School -> Education, Law Firm -> Legal, SaaS -> Technology, Finance -> Financial Services. Ensure no Fashion brand is classified as a Tech brand, or vice versa.
+3. PRODUCTS & SERVICES: Products and services list must come directly from the content. If the brand sells clothing, extract clothing categories rather than technology products.
+4. AUDIENCE & KEYWORDS: Target audience and SEO keywords must be inferred and extracted directly from headings, categories, product names, metadata, and page content.
+5. COMPETITORS: Competitors must be inferred based on the actual industry and market of the brand (e.g. real brands in the same space), not placeholder names like "Competitor1".
+6. INTERNAL VALIDATION: Perform an internal consistency check before writing the JSON. Verify that Industry, Products, Services, Target Audience, Keywords, and Competitors are all consistent with each other. If inconsistencies are found, prioritize actual content findings.
+
+═══════════════════════════════════════════════════
 CONTENT TO ANALYZE:
 ═══════════════════════════════════════════════════
 ${rawText.substring(0, 25000)}
@@ -37,7 +47,8 @@ Return ONLY a valid JSON object. Do NOT wrap it in markdown code fences (such as
 Every field inside the sections below must be an object containing:
 - "value": The extracted or inferred value (string, array of strings, or other types as specified)
 - "confidence": An integer between 0 and 100 reflecting how much actual evidence you found
-- "reasoning": A short explanation of how the value was derived or inferred (e.g., "Derived from About Us and Homepage.")
+- "source": Exactly one of: "WEBSITE", "ABOUT PAGE", "PRODUCT PAGE", "META TAGS", or "AI INFERRED" depending on where the evidence was found
+- "reasoning": A short explanation of how the value was derived or inferred (e.g., "Extracted from About page description.")
 
 JSON SCHEMA TEMPLATE:
 {
@@ -543,13 +554,16 @@ Website: ${existingDNA?.companyInfo?.website || ''}
 RAW KNOWLEDGE:
 ${(rawKnowledge || '').substring(0, 15000)}
 
-CRITICAL:
-1. Every field inside the "${sectionName}" section must be structured as an object with:
+STRICT EXTRACTION RULES & OBJECTIVE:
+1. NO PLACEHOLDERS: Generate Brand Intelligence based ONLY on the actual content found in the raw knowledge. Never return placeholder/generic text like "Innovative technology solutions", "Customer experience", "Global leader", "Cutting-edge technology" unless those statements explicitly exist in the content.
+2. ACCURATE PRODUCTS & SERVICES: Products and services must match the crawled page content exactly.
+3. Every field inside the "${sectionName}" section must be structured as an object with:
    - "value": The extracted or inferred value (string, array of strings, or other types as specified in the template structure below)
    - "confidence": An integer between 0 and 100
+   - "source": Exactly one of: "WEBSITE", "ABOUT PAGE", "PRODUCT PAGE", "META TAGS", or "AI INFERRED" depending on where the evidence was found
    - "reasoning": A short explanation of the inference/extraction reason
-2. Do NOT return empty fields. If information is missing, infer it intelligently.
-3. Return ONLY a valid JSON object matching the keys and structures defined in this template schema:
+4. Do NOT return empty fields. If information is missing, infer it intelligently.
+5. Return ONLY a valid JSON object matching the keys and structures defined in this template schema:
 ${templateStr}
 
 Do NOT wrap the output in markdown code fences. Do NOT include any conversation.`;
@@ -590,7 +604,24 @@ const mapSingleSectionOutput = (sectionName, sectionJson) => {
         continue;
       }
 
-      mappedSec[fieldKey] = fieldVal.value;
+      let finalVal = fieldVal.value;
+      const source = fieldVal.source || 'WEBSITE';
+      const confidence = typeof fieldVal.confidence === 'number' ? fieldVal.confidence : 90;
+
+      if (typeof finalVal === 'string' && finalVal.trim().length > 0) {
+        if (!finalVal.includes('SOURCE:')) {
+          finalVal = `${finalVal.trim()}\n\nSOURCE: ${source.toUpperCase()} | CONFIDENCE: ${confidence}%`;
+        }
+      } else if (Array.isArray(finalVal)) {
+        finalVal = finalVal.map(item => {
+          if (typeof item === 'string' && item.trim().length > 0 && !item.includes('SOURCE:')) {
+            return `${item.trim()} (SOURCE: ${source.toUpperCase()} | CONFIDENCE: ${confidence}%)`;
+          }
+          return item;
+        });
+      }
+
+      mappedSec[fieldKey] = finalVal;
       if (typeof fieldVal.confidence === 'number' || typeof fieldVal.confidence === 'string') {
         confidenceSum += Number(fieldVal.confidence);
         confidenceCount++;
