@@ -352,27 +352,38 @@ Do NOT output markdown wrappers or code blocks. Just return raw JSON.
       };
     }).filter(c => c !== null && c.hex);
 
-    const fonts = Object.entries(structured.typography || {}).map(([key, val]) => ({
-      name: val.name,
-      weights: val.weights,
-      isGoogleFont: val.isGoogleFont,
-      confidence: val.confidence || 95,
-      source: val.source || 'Auto'
-    })).filter(f => f.name);
+    const fonts = Object.entries(structured.typography || {}).map(([key, val]) => {
+      if (!val) return null;
+      const name = typeof val === 'object' ? val.name : (typeof val === 'string' ? val : null);
+      if (!name) return null;
+      return {
+        name: name,
+        weights: typeof val === 'object' ? val.weights : [],
+        isGoogleFont: typeof val === 'object' ? val.isGoogleFont : false,
+        confidence: typeof val === 'object' ? (val.confidence || 95) : 95,
+        source: typeof val === 'object' ? (val.source || 'Auto') : 'Auto'
+      };
+    }).filter(f => f !== null && f.name);
 
-    const images = (structured.images || []).map(img => ({
-      url: img.url,
-      label: (img.category || 'Brand') + ' Image',
-      confidence: img.confidence || 90,
-      source: img.source || 'Auto'
-    }));
+    const images = (structured.images || []).map(img => {
+      if (!img) return null;
+      return {
+        url: img.url || (typeof img === 'string' ? img : ''),
+        label: (img.category || 'Brand') + ' Image',
+        confidence: img.confidence || 90,
+        source: img.source || 'Auto'
+      };
+    }).filter(img => img && img.url);
 
-    const socialProfiles = (structured.socialMedia?.profiles || []).map(p => ({
-      platform: p.platform,
-      url: p.url,
-      confidence: p.confidence || 95,
-      source: p.source || 'Auto'
-    }));
+    const socialProfiles = (structured.socialMedia?.profiles || []).map(p => {
+      if (!p) return null;
+      return {
+        platform: p.platform || '',
+        url: p.url || '',
+        confidence: p.confidence || 95,
+        source: p.source || 'Auto'
+      };
+    }).filter(p => p && (p.platform || p.url));
 
     const documents = scrapedData?.documents || [];
 
