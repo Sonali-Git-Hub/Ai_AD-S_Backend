@@ -75,7 +75,7 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
   if (mode === "webSearch") mode = "web_search";
   if (mode === "deepSearch") mode = "DEEP_SEARCH";
   if (mode === "codeWriter") mode = "CODE_WRITER";
-  if (mode === "aiLegal") mode = "LEGAL_TOOLKIT";
+  if (mode === "aiLegal" || mode === "legal" || mode === "LEGAL") mode = "LEGAL_TOOLKIT";
 
   try {
     // 1. LIMIT & CREDIT CHECKS
@@ -412,7 +412,7 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
         sessionType: sessionTypeTag,
         title: aiTitle || "New Chat",
         detectedMode: detectedMode || 'NORMAL_CHAT',
-        activeTool: req.body.activeTool || null,
+        activeTool: req.body.activeTool || (mode === 'LEGAL_TOOLKIT' ? 'General Legal Chat' : null),
         messages: []
       });
       if (userId) await userModel.findByIdAndUpdate(userId, { $addToSet: { chatSessions: session._id } });
@@ -426,6 +426,7 @@ router.post("/", optionalVerifyToken, identifyGuest, async (req, res) => {
       // Update mode and tool if provided
       if (detectedMode) session.detectedMode = detectedMode;
       if (req.body.activeTool) session.activeTool = req.body.activeTool;
+      else if (mode === 'LEGAL_TOOLKIT' && !session.activeTool) session.activeTool = 'General Legal Chat';
       
       session.lastModified = Date.now();
       await session.save();
