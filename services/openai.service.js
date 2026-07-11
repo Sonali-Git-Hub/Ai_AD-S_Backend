@@ -12,7 +12,7 @@ export const askOpenAI = async (prompt, context = null, options = {}) => {
             throw new Error("OPENAI_API_KEY is missing in environment variables.");
         }
 
-        let { systemInstruction, userName } = options;
+        let { systemInstruction, userName, mode } = options;
 
         // Dynamically inject Brand Memory if workspaceId/userId is present or in context
         let activeWorkspaceId = options.workspaceId;
