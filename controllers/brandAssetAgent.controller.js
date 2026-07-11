@@ -282,7 +282,7 @@ Return ONLY valid JSON matching this schema:
 Do NOT output markdown wrappers or code blocks. Just return raw JSON.
 `;
 
-    const aiRes = await AskVertexRaw(aiPrompt, { modelOverride: 'gemini-1.5-flash' });
+    const aiRes = await AskVertexRaw(aiPrompt, { modelOverride: 'gemini-2.5-flash' });
     const cleanJsonText = aiRes.trim().replace(new RegExp("```json", "g"), "").replace(new RegExp("```", "g"), "");
     const structured = JSON.parse(cleanJsonText);
 
