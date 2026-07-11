@@ -605,24 +605,7 @@ const mapSingleSectionOutput = (sectionName, sectionJson) => {
         continue;
       }
 
-      let finalVal = fieldVal.value;
-      const source = fieldVal.source || 'WEBSITE';
-      const confidence = typeof fieldVal.confidence === 'number' ? fieldVal.confidence : 90;
-
-      if (typeof finalVal === 'string' && finalVal.trim().length > 0) {
-        if (!finalVal.includes('SOURCE:')) {
-          finalVal = `${finalVal.trim()}\n\nSOURCE: ${source.toUpperCase()} | CONFIDENCE: ${confidence}%`;
-        }
-      } else if (Array.isArray(finalVal)) {
-        finalVal = finalVal.map(item => {
-          if (typeof item === 'string' && item.trim().length > 0 && !item.includes('SOURCE:')) {
-            return `${item.trim()} (SOURCE: ${source.toUpperCase()} | CONFIDENCE: ${confidence}%)`;
-          }
-          return item;
-        });
-      }
-
-      mappedSec[fieldKey] = finalVal;
+      mappedSec[fieldKey] = fieldVal.value;
       if (typeof fieldVal.confidence === 'number' || typeof fieldVal.confidence === 'string') {
         confidenceSum += Number(fieldVal.confidence);
         confidenceCount++;
