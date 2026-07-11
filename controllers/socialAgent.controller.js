@@ -138,7 +138,7 @@ export const getAllWorkspaces = async (req, res) => {
     const mongoose = await import('mongoose');
     const workspaces = await SocialAgentWorkspace.aggregate([
       { $match: { userId: new mongoose.Types.ObjectId(req.user.id) } },
-      { $sort: { createdAt: -1 } },
+      { $sort: { lastAccessedAt: -1, createdAt: -1 } },
       {
         $lookup: {
           from: 'brandprofiles', // Lowercase collection name for BrandProfile
@@ -180,15 +180,19 @@ export const getWorkspace = async (req, res) => {
   try {
     // If a specific workspace is requested by ID, return that one
     const { id } = req.params;
+    let workspace;
     if (id && id !== 'current') {
-      const workspace = await SocialAgentWorkspace.findOne({ _id: id, userId: req.user.id });
-      if (!workspace) return res.status(200).json({ success: false, message: 'Workspace not found' });
-      return res.json({ success: true, workspace });
+      workspace = await SocialAgentWorkspace.findOne({ _id: id, userId: req.user.id });
+    } else {
+      // Return the most recently accessed/created workspace first
+      workspace = await SocialAgentWorkspace.findOne({ userId: req.user.id }).sort({ lastAccessedAt: -1, createdAt: -1 });
     }
-
-    // Otherwise return the OLDEST workspace first (the primary workspace with most data)
-    const workspace = await SocialAgentWorkspace.findOne({ userId: req.user.id }).sort({ createdAt: 1 });
     if (!workspace) return res.status(200).json({ success: false, message: 'Workspace not found' });
+    
+    // Update lastAccessedAt timestamp to persist the active brand context
+    workspace.lastAccessedAt = new Date();
+    await workspace.save();
+
     res.json({ success: true, workspace });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
