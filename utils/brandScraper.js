@@ -404,7 +404,7 @@ const crawlBrandContext = async (baseUrl, initialHtml = null) => {
       }
     });
 
-    const priorityKeywords = ['about', 'service', 'product', 'solution', 'company', 'who-we-are', 'what-we-do', 'our-work', 'portfolio', 'team'];
+    const priorityKeywords = ['about', 'service', 'product', 'solution', 'company', 'who-we-are', 'what-we-do', 'our-work', 'portfolio', 'team', 'collection', 'category', 'shop', 'women', 'men', 'apparel', 'clothing', 'store'];
     const sortedLinks = Array.from(internalLinks)
       .filter(link => link !== baseUrl && link !== (baseUrl + '/'))
       .sort((a, b) => {

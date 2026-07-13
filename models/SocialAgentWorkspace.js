@@ -11,6 +11,7 @@ const SocialAgentWorkspaceSchema = new mongoose.Schema({
     default: { type: String, default: '4:5' }
   },
   status: { type: String, enum: ['setup', 'active', 'paused'], default: 'setup' },
+  lastAccessedAt: { type: Date, default: Date.now },
 
   onboarding: {
     completed: { type: Boolean, default: false },

@@ -27,6 +27,17 @@ ${brandHint} ${industryHint} ${toneHint} ${colorHint} ${regionHint}
 SOURCE TYPE: ${sourceType}
 
 ═══════════════════════════════════════════════════
+STRICT EXTRACTION RULES & OBJECTIVE:
+═══════════════════════════════════════════════════
+1. NO PLACEHOLDERS: Generate Brand Intelligence based ONLY on the actual content found in the provided text. Never return placeholder/generic text like "Innovative technology solutions", "Customer experience", "Global leader", "Cutting-edge technology" unless those statements explicitly exist in the content.
+2. ACCURATE INDUSTRY: Industry classification must be highly accurate. For example: Fashion website -> Fashion, Restaurant -> Food, School -> Education, Law Firm -> Legal, SaaS -> Technology, Finance -> Financial Services. Ensure no Fashion brand is classified as a Tech brand, or vice versa.
+3. PRODUCTS & SERVICES: Products and services list must come directly from the content. If the brand sells clothing, extract clothing categories rather than technology products.
+4. AUDIENCE & KEYWORDS: Target audience and SEO keywords must be inferred and extracted directly from headings, categories, product names, metadata, and page content.
+5. COMPETITORS: Competitors must be inferred based on the actual industry and market of the brand (e.g. real brands in the same space), not placeholder names like "Competitor1".
+6. SPARSE CONTENT FALLBACK: If the crawled website content is empty, sparse, or fails to fetch (e.g., due to bot blocking), you MUST analyze the website URL / domain name itself to infer the brand and industry. For example: savana.com -> Fashion, apparel, clothing; decathlon.com -> Sports, fitness; standardchartered.com -> Finance, banking. Never default to "Technology & SaaS" or "Customer Experience Technology" templates if the domain/URL suggests a completely different industry!
+7. INTERNAL VALIDATION: Perform an internal consistency check before writing the JSON. Verify that Industry, Products, Services, Target Audience, Keywords, and Competitors are all consistent with each other. If inconsistencies are found, prioritize actual content findings.
+
+═══════════════════════════════════════════════════
 CONTENT TO ANALYZE:
 ═══════════════════════════════════════════════════
 ${rawText.substring(0, 25000)}
@@ -37,7 +48,8 @@ Return ONLY a valid JSON object. Do NOT wrap it in markdown code fences (such as
 Every field inside the sections below must be an object containing:
 - "value": The extracted or inferred value (string, array of strings, or other types as specified)
 - "confidence": An integer between 0 and 100 reflecting how much actual evidence you found
-- "reasoning": A short explanation of how the value was derived or inferred (e.g., "Derived from About Us and Homepage.")
+- "source": Exactly one of: "WEBSITE", "ABOUT PAGE", "PRODUCT PAGE", "META TAGS", or "AI INFERRED" depending on where the evidence was found
+- "reasoning": A short explanation of how the value was derived or inferred (e.g., "Extracted from About page description.")
 
 JSON SCHEMA TEMPLATE:
 {
@@ -543,13 +555,16 @@ Website: ${existingDNA?.companyInfo?.website || ''}
 RAW KNOWLEDGE:
 ${(rawKnowledge || '').substring(0, 15000)}
 
-CRITICAL:
-1. Every field inside the "${sectionName}" section must be structured as an object with:
+STRICT EXTRACTION RULES & OBJECTIVE:
+1. NO PLACEHOLDERS: Generate Brand Intelligence based ONLY on the actual content found in the raw knowledge. Never return placeholder/generic text like "Innovative technology solutions", "Customer experience", "Global leader", "Cutting-edge technology" unless those statements explicitly exist in the content.
+2. ACCURATE PRODUCTS & SERVICES: Products and services must match the crawled page content exactly.
+3. Every field inside the "${sectionName}" section must be structured as an object with:
    - "value": The extracted or inferred value (string, array of strings, or other types as specified in the template structure below)
    - "confidence": An integer between 0 and 100
+   - "source": Exactly one of: "WEBSITE", "ABOUT PAGE", "PRODUCT PAGE", "META TAGS", or "AI INFERRED" depending on where the evidence was found
    - "reasoning": A short explanation of the inference/extraction reason
-2. Do NOT return empty fields. If information is missing, infer it intelligently.
-3. Return ONLY a valid JSON object matching the keys and structures defined in this template schema:
+4. Do NOT return empty fields. If information is missing, infer it intelligently.
+5. Return ONLY a valid JSON object matching the keys and structures defined in this template schema:
 ${templateStr}
 
 Do NOT wrap the output in markdown code fences. Do NOT include any conversation.`;
