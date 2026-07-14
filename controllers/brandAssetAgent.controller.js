@@ -282,9 +282,17 @@ Return ONLY valid JSON matching this schema:
 Do NOT output markdown wrappers or code blocks. Just return raw JSON.
 `;
 
-    const aiRes = await AskVertexRaw(aiPrompt, { modelOverride: 'gemini-2.5-flash' });
-    const cleanJsonText = aiRes.trim().replace(new RegExp("```json", "g"), "").replace(new RegExp("```", "g"), "");
-    const structured = JSON.parse(cleanJsonText);
+    const aiRes = await AskVertexRaw(aiPrompt, { modelOverride: 'gemini-1.5-pro-002' });
+    let structured;
+    try {
+      const cleanJsonText = aiRes.trim().replace(/```json/g, "").replace(/```/g, "");
+      if (!cleanJsonText) throw new Error("AI returned an empty response.");
+      structured = JSON.parse(cleanJsonText);
+    } catch (parseErr) {
+      console.error("[AssetAgent] Failed to parse AI JSON response:", parseErr.message);
+      console.error("[AssetAgent] Raw AI Response:", aiRes);
+      throw new Error("AI Agent failed to structure the brand assets properly. Please try again.");
+    }
 
     // 5. Transform structured data back to arrays for UI compatibility
     const logos = [];

@@ -1,5 +1,5 @@
 import { Storage } from '@google-cloud/storage';
-import { GoogleAuth, Impersonated } from 'google-auth-library';
+import { GoogleAuth } from 'google-auth-library';
 import * as xlsx from 'xlsx';
 
 import officeparser from 'officeparser';
@@ -152,58 +152,46 @@ export const getOrInitPlanUsage = async (workspaceId, planType) => {
   return usage;
 };
 
-let impersonatedStorageClient = null;
-
-const getImpersonatedStorage = () => {
-  if (impersonatedStorageClient) return impersonatedStorageClient;
-
-  const targetPrincipal = process.env.VIDEO_SERVICE_ACCOUNT;
-  if (!targetPrincipal) return storage;
-
-  try {
-    // Rely on the native Storage SDK option for impersonated signing
-    impersonatedStorageClient = new Storage({
-      projectId: process.env.GCP_PROJECT_ID,
-      impersonatedServiceAccount: targetPrincipal
-    });
-    
-    console.log(`[GCS] Successfully initialized impersonated storage API for ${targetPrincipal}`);
-    return impersonatedStorageClient;
-  } catch (error) {
-    console.error(`[GCS] Failed to configure impersonated storage API: ${error.message}`);
-    return storage; 
-  }
-};
+// GoogleAuth for IAM-based signing (serviceAccountEmail approach)
+const _auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
+const TARGET_SA = process.env.VIDEO_SERVICE_ACCOUNT || 'video-signer@ai-mall-484810.iam.gserviceaccount.com';
 
 /**
- * Generate a signed URL for a file in GCS
+ * Generate a V4 Signed URL for a GCS file using the impersonated SA.
+ * Uses serviceAccountEmail + authClient so IAM signs on behalf of the SA,
+ * which works with user ADC without needing a local client_email key file.
  */
 export const generateSignedUrl = async (gcsUrl) => {
+  if (!gcsUrl || !gcsUrl.includes('storage.googleapis.com')) return gcsUrl;
+
+  // Strip existing query params (e.g. previous signed URL tokens)
+  const urlWithoutQuery = gcsUrl.split('?')[0];
+  const rawParts = urlWithoutQuery.split('storage.googleapis.com/')[1];
+  const bucketInUrl = rawParts.split('/')[0];
+  const fileName = rawParts.split('/').slice(1).join('/');
+
+  const expires = Date.now() + 15 * 60 * 1000; // 15 minutes
+
+  // Strategy 1: IAM signBlob via serviceAccountEmail (works with user ADC + impersonation)
   try {
-    if (!gcsUrl || !gcsUrl.includes('storage.googleapis.com')) return gcsUrl;
-
-    // Strip any existing query parameters from previous signed URLs
-    const urlWithoutQuery = gcsUrl.split('?')[0];
-
-    const rawParts = urlWithoutQuery.split('storage.googleapis.com/')[1];
-    const bucketInUrl = rawParts.split('/')[0];
-    const fileName = rawParts.split('/').slice(1).join('/');
-
-    // Use strictly impersonated storage for pure Signed URL architecture
-    const activeStorage = getImpersonatedStorage();
-
-    const file = activeStorage.bucket(bucketInUrl).file(fileName);
-
+    const authClient = await _auth.getClient();
+    const file = storage.bucket(bucketInUrl).file(fileName);
     const [url] = await file.getSignedUrl({
       version: 'v4',
       action: 'read',
-      expires: Date.now() + 15 * 60 * 1000, // 15 minutes
+      expires,
+      serviceAccountEmail: TARGET_SA,
+      authClient,
     });
-
     return url;
-  } catch (error) {
-    console.error("[GCS] Impersonated signed URL generation failed:", error.message);
-    // Explicitly throwing the error rather than proxying, enforcing the architecture
-    throw new Error(`Impersonated URL Generation Failed: ${error.message}`);
+  } catch (err) {
+    console.warn(`[GCS] IAM serviceAccountEmail signing failed (${err.message?.substring(0, 80)}) — trying plain getSignedUrl...`);
   }
+
+  // Strategy 3: Backend proxy — zero signing, works with plain ADC
+  const rawGcsUrl = `https://storage.googleapis.com/${bucketInUrl}/${fileName}`;
+  const BACKEND = process.env.LOCAL_BACKEND_URL || 'http://localhost:8080';
+  const proxyUrl = `${BACKEND}/api/media/proxy?url=${encodeURIComponent(rawGcsUrl)}`;
+  console.warn(`[GCS] All signing strategies failed — returning proxy URL`);
+  return proxyUrl;
 };

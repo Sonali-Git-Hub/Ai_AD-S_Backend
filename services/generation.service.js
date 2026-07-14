@@ -1258,9 +1258,16 @@ export const generateManualPost = async (workspaceId, payload) => {
   } = payload;
 
   const brand = await BrandProfile.findOne({ workspaceId });
-  const toneStr = Array.isArray(tone) ? tone.join(', ') : tone || 'Professional';
+  
+  // 1. Fallback to Brand Profile if user didn't specify in the wizard
+  const finalTone = (tone && tone.length > 0) ? tone : brand?.toneOfVoice;
+  const toneStr = Array.isArray(finalTone) ? finalTone.join(', ') : (finalTone || 'Professional');
 
-  const brandContext = brand ? `Name: ${brand.companyName || 'Brand'}, Industry: ${brand.targetIndustry || 'General'}, Description: ${brand.businessDescription || ''}` : 'No brand profile set';
+  const finalAudience = (targetAudience && targetAudience.length > 0) ? targetAudience : brand?.targetAudience;
+  const audienceStr = Array.isArray(finalAudience) ? finalAudience.join(', ') : (finalAudience || 'General Audience');
+
+  const brandDesc = brand ? (brand.extractedBrandSummary || brand.companyOverviewText || '') : '';
+  const brandContext = brand ? `Name: ${brand.companyName || 'Brand'}, Industry: ${brand.targetIndustry || 'General'}, Description: ${brandDesc}` : 'No brand profile set';
 
   const systemPrompt = `
     You are an expert Social Media Copywriter, growth marketer, and AI prompt engineer.
@@ -1271,7 +1278,7 @@ export const generateManualPost = async (workspaceId, payload) => {
     
     CRITICAL INPUTS:
     - POST FORMAT/TYPE: ${contentType}
-    - TARGET AUDIENCE: ${targetAudience}
+    - TARGET AUDIENCE: ${audienceStr}
     - TONE OF VOICE: ${toneStr}
     - LANGUAGE: ${language || 'English'}
     - CONTENT LENGTH: ${contentLength || 'Medium'}
@@ -1283,7 +1290,7 @@ export const generateManualPost = async (workspaceId, payload) => {
     STRICT INSTRUCTIONS:
     1. LANGUAGE: You MUST write all user-facing copy (hook, captions, cta, variations) in ${language || 'English'}. If the language is "Hinglish", write Hindi conversational text using the Latin/English alphabet.
     2. TONE: The writing style must strongly reflect the chosen tone(s): ${toneStr}. For example, if "Luxury", use elegant and premium words; if "Gen-Z", use casual modern slang and highly engaging structure.
-    3. TARGET AUDIENCE: Tailor the vocabulary, pain points, and benefits specifically to appeal to ${targetAudience}.
+    3. TARGET AUDIENCE: Tailor the vocabulary, pain points, and benefits specifically to appeal to ${audienceStr}.
     4. CONTENT LENGTH: Respect the chosen length:
        - "Short": Keep under 150 characters total, very punchy.
        - "Medium": Standard social media post size (2-3 paragraphs).
