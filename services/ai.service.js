@@ -83,7 +83,7 @@ export const chat = async (message, activeDocContent = null, options = {}) => {
             message = String(message || "");
         }
 
-        const { systemInstruction, mode, images, documents, userName, language, conversationId, userId, model, history, toolName } = options;
+        const { systemInstruction, mode, images, documents, userName, language, conversationId, userId, model, history, toolName, workspaceId } = options;
 
         const lowerMsg = message.toLowerCase().trim();
         const companyKeywords = ['uwo', 'aisa', 'ai mall', 'unified web', 'what can you do', 'your features', 'your capabilities', 'who are you', 'how can you help', 'tell me about your services'];

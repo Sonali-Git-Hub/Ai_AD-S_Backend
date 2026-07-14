@@ -1,5 +1,6 @@
 import * as vertexService from './vertex.service.js';
 import logger from '../utils/logger.js';
+import { safeParseLLMJson } from '../utils/jsonUtils.js';
 
 const PERSONALITY_TRAITS = [
   'Professional', 'Friendly', 'Premium', 'Luxury', 'Modern',
@@ -33,9 +34,10 @@ STRICT EXTRACTION RULES & OBJECTIVE:
 2. ACCURATE INDUSTRY: Industry classification must be highly accurate. For example: Fashion website -> Fashion, Restaurant -> Food, School -> Education, Law Firm -> Legal, SaaS -> Technology, Finance -> Financial Services. Ensure no Fashion brand is classified as a Tech brand, or vice versa.
 3. PRODUCTS & SERVICES: Products and services list must come directly from the content. If the brand sells clothing, extract clothing categories rather than technology products.
 4. AUDIENCE & KEYWORDS: Target audience and SEO keywords must be inferred and extracted directly from headings, categories, product names, metadata, and page content.
-5. COMPETITORS: Competitors must be inferred based on the actual industry and market of the brand (e.g. real brands in the same space), not placeholder names like "Competitor1".
-6. SPARSE CONTENT FALLBACK: If the crawled website content is empty, sparse, or fails to fetch (e.g., due to bot blocking), you MUST analyze the website URL / domain name itself to infer the brand and industry. For example: savana.com -> Fashion, apparel, clothing; decathlon.com -> Sports, fitness; standardchartered.com -> Finance, banking. Never default to "Technology & SaaS" or "Customer Experience Technology" templates if the domain/URL suggests a completely different industry!
-7. INTERNAL VALIDATION: Perform an internal consistency check before writing the JSON. Verify that Industry, Products, Services, Target Audience, Keywords, and Competitors are all consistent with each other. If inconsistencies are found, prioritize actual content findings.
+5. ACCURATE AGE GROUPS: Analyze the target audience's demographic profile based on the products/services, tone, and content. The "ageGroups" field must accurately reflect the specific age brackets of the target consumers or decision-makers (e.g., kids, teens, adults, parents, seniors, or specific ranges like "0-12", "13-17", "18-24", "25-34", "35-44", "45-54", "55-64", "65+"). Never default to a generic "25-34" or "35-44" template range unless it is highly relevant. If the product is for children/students, specify both the end-users (e.g., kids/students) and decision-makers (e.g., parents/educators) with their respective age groups.
+6. COMPETITORS: Competitors must be inferred based on the actual industry and market of the brand (e.g. real brands in the same space), not placeholder names like "Competitor1".
+7. SPARSE CONTENT FALLBACK: If the crawled website content is empty, sparse, or fails to fetch (e.g., due to bot blocking), you MUST analyze the website URL / domain name itself to infer the brand and industry. For example: savana.com -> Fashion, apparel, clothing; decathlon.com -> Sports, fitness; standardchartered.com -> Finance, banking. Never default to "Technology & SaaS" or "Customer Experience Technology" templates if the domain/URL suggests a completely different industry!
+8. INTERNAL VALIDATION: Perform an internal consistency check before writing the JSON. Verify that Industry, Products, Services, Target Audience, Keywords, and Competitors are all consistent with each other. If inconsistencies are found, prioritize actual content findings.
 
 ═══════════════════════════════════════════════════
 CONTENT TO ANALYZE:
@@ -188,7 +190,7 @@ JSON SCHEMA TEMPLATE:
   },
   "audienceProfile": {
     "ageGroups": {
-      "value": ["25-34", "35-44"],
+      "value": ["Array of accurate target age groups relevant to this brand (e.g. '18-24', '25-34', '35-44', '45-54', 'Kids (0-12)', 'Teens (13-17)', etc.)"],
       "confidence": 80,
       "reasoning": "Reasoning details"
     },
@@ -470,7 +472,7 @@ const SECTION_TEMPLATES = {
     emojiUsage: "Minimal, Moderate, or Frequent"
   },
   audienceProfile: {
-    ageGroups: ["25-34", "35-44"],
+    ageGroups: ["Array of accurate, specific target age groups (e.g. 18-24, 25-34, 35-44, or child/teen categories if applicable)"],
     gender: ["All Genders"],
     industry: ["Industry1", "Industry2"],
     profession: ["Profession1", "Profession2"],
@@ -558,13 +560,14 @@ ${(rawKnowledge || '').substring(0, 15000)}
 STRICT EXTRACTION RULES & OBJECTIVE:
 1. NO PLACEHOLDERS: Generate Brand Intelligence based ONLY on the actual content found in the raw knowledge. Never return placeholder/generic text like "Innovative technology solutions", "Customer experience", "Global leader", "Cutting-edge technology" unless those statements explicitly exist in the content.
 2. ACCURATE PRODUCTS & SERVICES: Products and services must match the crawled page content exactly.
-3. Every field inside the "${sectionName}" section must be structured as an object with:
+3. ACCURATE AUDIENCE PROFILE & AGE GROUPS: Analyze the target audience's demographic profile based on the raw knowledge. The "ageGroups" field must accurately reflect the specific age brackets of the target consumers or decision-makers (e.g. kids, teens, adults, parents, seniors, or specific ranges like "0-12", "13-17", "18-24", "25-34", "35-44", "45-54", "55-64", "65+"). Never default to a generic template value unless it is highly relevant.
+4. Every field inside the "${sectionName}" section must be structured as an object with:
    - "value": The extracted or inferred value (string, array of strings, or other types as specified in the template structure below)
    - "confidence": An integer between 0 and 100
    - "source": Exactly one of: "WEBSITE", "ABOUT PAGE", "PRODUCT PAGE", "META TAGS", or "AI INFERRED" depending on where the evidence was found
    - "reasoning": A short explanation of the inference/extraction reason
-4. Do NOT return empty fields. If information is missing, infer it intelligently.
-5. Return ONLY a valid JSON object matching the keys and structures defined in this template schema:
+5. Do NOT return empty fields. If information is missing, infer it intelligently.
+6. Return ONLY a valid JSON object matching the keys and structures defined in this template schema:
 ${templateStr}
 
 Do NOT wrap the output in markdown code fences. Do NOT include any conversation.`;
@@ -667,18 +670,11 @@ export const extractFullBrandDNA = async (rawText, sourceType = 'mixed', metadat
       temperature: 0.4
     });
     
-    let cleanJson = aiResult.trim();
-    cleanJson = cleanJson.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-    
-    const firstBrace = cleanJson.indexOf('{');
-    const lastBrace = cleanJson.lastIndexOf('}');
-    if (firstBrace === -1 || lastBrace === -1) {
+    const rawDna = safeParseLLMJson(aiResult);
+    if (!rawDna) {
       throw new Error(`AI model did not return a valid JSON object. Content received: "${aiResult.substring(0, 200)}..."`);
     }
-    cleanJson = cleanJson.substring(firstBrace, lastBrace + 1);
-    cleanJson = cleanJson.replace(/,(\s*[\]}])/g, '$1');
-    
-    const rawDna = JSON.parse(cleanJson);
+
     const dna = mapAIOutputToSchema(rawDna);
     
     // Post-validation: ensure no critical sections are completely empty
@@ -732,18 +728,11 @@ export const regenerateSection = async (sectionName, existingDNA, rawKnowledge) 
       temperature: 0.5
     });
     
-    let cleanJson = aiResult.trim();
-    cleanJson = cleanJson.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-    
-    const firstBrace = cleanJson.indexOf('{');
-    const lastBrace = cleanJson.lastIndexOf('}');
-    if (firstBrace === -1 || lastBrace === -1) {
+    const sectionJson = safeParseLLMJson(aiResult);
+    if (!sectionJson) {
       throw new Error(`AI model did not return a valid JSON object. Content received: "${aiResult.substring(0, 200)}..."`);
     }
-    cleanJson = cleanJson.substring(firstBrace, lastBrace + 1);
-    cleanJson = cleanJson.replace(/,(\s*[\]}])/g, '$1');
 
-    const sectionJson = JSON.parse(cleanJson);
     const sectionData = mapSingleSectionOutput(sectionName, sectionJson);
     
     return { success: true, sectionData };
