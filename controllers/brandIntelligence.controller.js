@@ -266,7 +266,8 @@ export const saveBrandDNA = async (req, res) => {
     }
 
     // Sync legacy fields
-    if (dna?.companyInfo?.brandName)  brand.companyName  = dna.companyInfo.brandName;
+    const brandName = dna?.companyInfo?.brandName;
+    if (brandName)  brand.companyName  = brandName;
     if (dna?.companyInfo?.website)    brand.website      = dna.companyInfo.website;
     if (dna?.brandVoice?.toneOfVoice) brand.toneOfVoice  = dna.brandVoice.toneOfVoice;
     if (dna?.visualIdentity?.brandColors?.length) brand.brandColors = dna.visualIdentity.brandColors;
@@ -278,6 +279,14 @@ export const saveBrandDNA = async (req, res) => {
     if (rawKnowledgeBase)  brand.rawKnowledgeBase = rawKnowledgeBase;
 
     await brand.save();
+
+    // ── Keep SocialAgentWorkspace in sync with brand name & last access ──────
+    // This is critical for Brand History — getAllWorkspaces uses workspaceName for display
+    const { default: SocialAgentWorkspace } = await import('../models/SocialAgentWorkspace.js');
+    const wsUpdate = { lastAccessedAt: new Date() };
+    if (brandName) wsUpdate.workspaceName = brandName;
+    if (logoUrl) wsUpdate.logoUrl = logoUrl;  // some workspaces carry a top-level logoUrl
+    await SocialAgentWorkspace.findByIdAndUpdate(workspaceId, { $set: wsUpdate }).catch(() => {});
 
     // Prepare response showing active versions from normalized tables
     const brandObj = brand.toObject();
