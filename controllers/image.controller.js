@@ -137,8 +137,8 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
                     else if (aspectRatio === '4:5') geminiRatio = '4:5';
                     else if (aspectRatio === '1:1') geminiRatio = '1:1';
 
-                    console.log(`⏳ [Step 1/3] Sending prompt to ${model} via generateContentStream with ratio ${geminiRatio}...`);
-                    const response = await client.models.generateContentStream({
+                    console.log(`⏳ [Step 1/3] Sending prompt to ${model} via generateContent with ratio ${geminiRatio}...`);
+                    const response = await client.models.generateContent({
                         model,
                         contents: imagePrompt,
                         config: {
@@ -147,31 +147,21 @@ export const generateImageFromPrompt = async (prompt, originalImage = null, aspe
                         },
                     });
 
-                    console.log(`📡 [Step 1/3] Stream opened, receiving chunks...`);
-                    let chunkCount = 0;
-                    for await (const chunk of response) {
-                        chunkCount++;
-                        if (chunk.text) {
-                            console.log(`   • Model says: ${chunk.text.substring(0, 100)}`);
-                        } else if (chunk.data) {
-                            base64Data = Buffer.from(chunk.data).toString('base64');
-                            console.log(`   • Chunk #${chunkCount}: raw binary data received`);
-                        }
-                        const parts = chunk.candidates?.[0]?.content?.parts || [];
-                        for (const part of parts) {
-                            if (part.inlineData?.data) {
-                                base64Data = part.inlineData.data;
-                                mimeType = part.inlineData.mimeType || 'image/png';
-                                console.log(`   ✅ Chunk #${chunkCount}: inlineData image | MIME: ${mimeType}`);
-                            }
+                    console.log(`✅ [Step 1/3] Response received from ${model}`);
+
+                    for (const part of response.candidates[0].content.parts) {
+                        if (part.text) {
+                            console.log(`   • Model note: ${part.text.substring(0, 100)}`);
+                        } else if (part.inlineData) {
+                            base64Data = part.inlineData.data;
+                            mimeType = part.inlineData.mimeType || 'image/png';
+                            console.log(`   ✅ Image data extracted | MIME: ${mimeType} | Size: ~${Math.round(base64Data.length * 0.75 / 1024)}KB`);
                         }
                     }
-                    console.log(`✅ [Step 1/3] Stream complete. Total chunks: ${chunkCount}`);
 
                     if (!base64Data) {
                         throw new Error('Model returned no image for generation request.');
                     }
-                    console.log(`🔍 [Step 2/3] Image data extracted | Size: ~${Math.round(base64Data.length * 0.75 / 1024)}KB`);
                 }
 
                 // ── UPLOAD TO GCS ──────────────────────────────────────────────

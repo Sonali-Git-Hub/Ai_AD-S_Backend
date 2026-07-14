@@ -1350,81 +1350,79 @@ export const generateManualPost = async (workspaceId, payload) => {
     dateString: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
   });
 
-  // Get logo and base image URL (prefer first uploaded file if present, fallback to brand logo)
+  const shouldGenerateImage = enhancements?.generateImagePrompt !== false;
+  
   let logoUrl = brand?.logoUrl || null;
   let baseImageUrl = null;
+  let finalImageUrl = null;
 
-  if (uploadedFiles && uploadedFiles.length > 0) {
-    const firstFile = uploadedFiles[0];
-    const isLogo = firstFile.filename?.toLowerCase().includes('logo') || 
-                   description.toLowerCase().includes('logo');
-                   
-    const promptText = copyOutput.imagePrompt || `A professional high-quality social media ad for ${platform}. ${description}`;
-    
-    if (isLogo) {
-      logoUrl = firstFile.url;
-      // Since it's identified as a logo, generate a new AI background from scratch
+  if (shouldGenerateImage) {
+    if (uploadedFiles && uploadedFiles.length > 0) {
+      const firstFile = uploadedFiles[0];
+      const isLogo = firstFile.filename?.toLowerCase().includes('logo') || 
+                     description.toLowerCase().includes('logo');
+                     
+      const promptText = copyOutput.imagePrompt || `A professional high-quality social media ad for ${platform}. ${description}`;
+      
+      if (isLogo) {
+        logoUrl = firstFile.url;
+        try {
+          console.log(`[ManualGen] Uploaded file identified as logo. Generating AI background...`);
+          baseImageUrl = await generateImageFromPrompt(promptText, null, '1:1', 'gemini-3.1-flash-image-preview');
+        } catch (err) {
+          console.error(`[ManualGen] Imagen background generation failed: ${err.message}`);
+        }
+      } else {
+        try {
+          console.log(`[ManualGen] Uploaded file used as Image-to-Image reference. Converting to base64...`);
+          const base64 = await getImageBase64(firstFile.url);
+          if (base64) {
+            console.log(`[ManualGen] Executing Image-to-Image edit with reference image...`);
+            baseImageUrl = await generateImageFromPrompt(promptText, base64, '1:1', 'gemini-2.5-flash-image');
+          } else {
+            console.warn(`[ManualGen] Base64 conversion failed, falling back to raw uploaded image as background`);
+            baseImageUrl = firstFile.url;
+          }
+        } catch (err) {
+          console.error(`[ManualGen] Image-to-Image pipeline failed: ${err.message}. Falling back to raw uploaded image.`);
+          baseImageUrl = firstFile.url;
+        }
+      }
+    } else {
+      const promptText = copyOutput.imagePrompt || `A professional high-quality social media ad for ${platform}. ${description}`;
       try {
-        console.log(`[ManualGen] Uploaded file identified as logo. Generating AI background...`);
-        baseImageUrl = await generateImageFromPrompt(promptText, null, '1:1', 'imagen-3.0-generate-001');
+        console.log(`[ManualGen] Generating AI background...`);
+        baseImageUrl = await generateImageFromPrompt(promptText, null, '1:1', 'gemini-3.1-flash-image-preview');
       } catch (err) {
         console.error(`[ManualGen] Imagen background generation failed: ${err.message}`);
       }
-    } else {
-      // It's a post reference image! Run Image-to-Image / Edit pipeline
+    }
+
+    finalImageUrl = baseImageUrl || logoUrl || "https://storage.googleapis.com/social_media_agent_assets/mock/ai_post.png";
+    if (baseImageUrl) {
       try {
-        console.log(`[ManualGen] Uploaded file used as Image-to-Image reference. Converting to base64...`);
-        const base64 = await getImageBase64(firstFile.url);
-        if (base64) {
-          console.log(`[ManualGen] Executing Image-to-Image edit with reference image...`);
-          // Note: Image editing via Gemini models (gemini-2.5-flash-image) supports originalImage parameter
-          baseImageUrl = await generateImageFromPrompt(promptText, base64, '1:1', 'gemini-2.5-flash-image');
-        } else {
-          console.warn(`[ManualGen] Base64 conversion failed, falling back to raw uploaded image as background`);
-          baseImageUrl = firstFile.url;
-        }
+        console.log(`[ManualGen] Compositing overlays on base image with logo: ${logoUrl ? 'Yes' : 'No'}`);
+        finalImageUrl = await applyVisualOverlays(baseImageUrl, logoUrl, post.hook, post.captionShort || post.captionLong?.substring(0, 50), '1:1');
       } catch (err) {
-        console.error(`[ManualGen] Image-to-Image pipeline failed: ${err.message}. Falling back to raw uploaded image.`);
-        baseImageUrl = firstFile.url;
+        console.error(`[ManualGen] Visual overlays composition failed: ${err.message}`);
+        finalImageUrl = baseImageUrl;
       }
     }
-  } else {
-    // No uploaded file: generate AI background
-    const promptText = copyOutput.imagePrompt || `A professional high-quality social media ad for ${platform}. ${description}`;
-    try {
-      console.log(`[ManualGen] Generating AI background...`);
-      baseImageUrl = await generateImageFromPrompt(promptText, null, '1:1', 'imagen-3.0-generate-001');
-    } catch (err) {
-      console.error(`[ManualGen] Imagen background generation failed: ${err.message}`);
-    }
+
+    const asset = await GeneratedAsset.create({
+      postId: post._id,
+      workspaceId,
+      assetType: 'image',
+      assetSource: 'generated',
+      gcsUrl: finalImageUrl,
+      mimeType: 'image/png',
+      fileSize: 0,
+      dateString: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    });
+
+    post.primaryAssetId = asset._id;
+    await post.save();
   }
-
-  let finalImageUrl = baseImageUrl || logoUrl || "https://storage.googleapis.com/social_media_agent_assets/mock/ai_post.png";
-  if (baseImageUrl) {
-    try {
-      console.log(`[ManualGen] Compositing overlays on base image with logo: ${logoUrl ? 'Yes' : 'No'}`);
-      finalImageUrl = await applyVisualOverlays(baseImageUrl, logoUrl, post.hook, post.captionShort || post.captionLong?.substring(0, 50), '1:1');
-    } catch (err) {
-      console.error(`[ManualGen] Visual overlays composition failed: ${err.message}`);
-      // Fallback to base image
-      finalImageUrl = baseImageUrl;
-    }
-  }
-
-  // Save the finalized visual as a GeneratedAsset
-  const asset = await GeneratedAsset.create({
-    postId: post._id,
-    workspaceId,
-    assetType: 'image',
-    assetSource: 'generated',
-    gcsUrl: finalImageUrl,
-    mimeType: 'image/png',
-    fileSize: 0,
-    dateString: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-  });
-
-  post.primaryAssetId = asset._id;
-  await post.save();
 
   return post;
 };
