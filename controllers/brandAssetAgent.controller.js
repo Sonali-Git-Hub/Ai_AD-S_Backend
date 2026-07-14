@@ -1,12 +1,16 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { discoverBrandAssets } from '../utils/brandScraper.js';
+import { discoverBrandAssets, resolveLogoWithFallbacks, normalizeUrl } from '../utils/brandScraper.js';
 import { BrandProfile } from '../models/BrandProfile.js';
 import UploadAsset from '../models/UploadAsset.js';
 import * as brandProcessor from '../services/brandProcessor.service.js';
 import { AskVertexRaw } from '../services/vertex.service.js';
 import logger from '../utils/logger.js';
+import { safeParseLLMJson } from '../utils/jsonUtils.js';
+import axios from 'axios';
+import * as cheerio from 'cheerio';
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -106,12 +110,36 @@ export const discoverAssets = async (req, res) => {
 
     // 3. Scrape official website
     let scrapedData = null;
+    let guaranteedLogoUrl = null;
+
     if (targetUrl) {
       try {
         console.log(`[AssetAgent] Scraping website: ${targetUrl}`);
         scrapedData = await discoverBrandAssets(targetUrl);
       } catch (err) {
         console.warn(`[AssetAgent] Scraper failed for ${targetUrl}:`, err.message);
+      }
+
+      // Pre-resolve a guaranteed logo using the full fallback chain
+      try {
+        console.log(`[AssetAgent] Pre-resolving guaranteed logo for: ${targetUrl}`);
+        const normalizedUrl = normalizeUrl(targetUrl);
+        const BROWSER_HEADERS = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36' };
+        const htmlRes = await axios.get(normalizedUrl, {
+          headers: BROWSER_HEADERS,
+          timeout: 10000,
+          maxContentLength: 3 * 1024 * 1024
+        }).catch(() => ({ data: '' }));
+        const $page = cheerio.load(htmlRes.data || '');
+        guaranteedLogoUrl = await resolveLogoWithFallbacks($page, normalizedUrl);
+        console.log(`[AssetAgent] Guaranteed logo resolved: ${guaranteedLogoUrl}`);
+      } catch (logoErr) {
+        // Absolute last resort: Google Favicon
+        try {
+          const rootDomain = new URL(normalizeUrl(targetUrl)).hostname.replace(/^www\./, '');
+          guaranteedLogoUrl = `https://www.google.com/s2/favicons?domain=${rootDomain}&sz=128`;
+          console.log(`[AssetAgent] Google Favicon fallback: ${guaranteedLogoUrl}`);
+        } catch { }
       }
     }
 
@@ -137,6 +165,9 @@ Brand Name: ${brand?.companyName || ""}
 Brand Description: ${brand?.companyOverviewText || ""}
 Social Links from Profile: ${JSON.stringify(brand?.socialMediaLinks || {})}
 
+6. PRE-RESOLVED LOGO URL (guaranteed accessible — ALWAYS use this as logo.primary.url if no uploaded logo exists):
+${guaranteedLogoUrl || "(None available)"}
+
 --------------------------------------------------------
 OBJECTIVE
 --------------------------------------------------------
@@ -150,15 +181,15 @@ RULES & CONSTRAINTS
    - If an uploaded file contains better or conflicting information than the website, always prefer the uploaded file.
 
 2. LOGO EXTRACTION:
-   - If a logo is already uploaded (in UPLOADED LOGO above), use it as the primary.
-   - Otherwise, search and match logo URLs found from the official website.
+   - IMPORTANT: A PRE-RESOLVED LOGO URL is provided in section 6 above — it is guaranteed to be accessible. 
+     If no uploaded logo exists, you MUST use it as the value for logo.primary.url.
    - For all logo types (primary, dark, light, transparent), favicon, and appIcon, measure/estimate and return:
      - "resolution": e.g., "512x512", "1200x300", or "Unknown"
      - "background": e.g., "Transparent", "White", "Dark"
      - "quality": e.g., "High", "Medium", "Low"
      - "confidence": confidence score (0 to 100)
-     - "source": where it was extracted (e.g. "Uploaded Brand Guide", "Website Header", "Favicon")
-   - Do NOT invent URLs or fabricate logo paths. If not found, do not set them.
+     - "source": where it was extracted (e.g. "Uploaded Brand Guide", "Website Header", "Pre-Resolved Favicon")
+   - Do NOT fabricate or invent URLs. Only use URLs from the inputs above.
 
 3. COLOR EXTRACTION:
    - Extract colors from the logo, website CSS, brand documents, and uploaded images.
@@ -282,17 +313,9 @@ Return ONLY valid JSON matching this schema:
 Do NOT output markdown wrappers or code blocks. Just return raw JSON.
 `;
 
-    const aiRes = await AskVertexRaw(aiPrompt, { modelOverride: 'gemini-1.5-pro-002' });
-    let structured;
-    try {
-      const cleanJsonText = aiRes.trim().replace(/```json/g, "").replace(/```/g, "");
-      if (!cleanJsonText) throw new Error("AI returned an empty response.");
-      structured = JSON.parse(cleanJsonText);
-    } catch (parseErr) {
-      console.error("[AssetAgent] Failed to parse AI JSON response:", parseErr.message);
-      console.error("[AssetAgent] Raw AI Response:", aiRes);
-      throw new Error("AI Agent failed to structure the brand assets properly. Please try again.");
-    }
+    const aiRes = await AskVertexRaw(aiPrompt, { modelOverride: 'gemini-2.5-flash' });
+    const cleanJsonText = aiRes.trim().replace(new RegExp("```json", "g"), "").replace(new RegExp("```", "g"), "");
+    const structured = safeParseLLMJson(cleanJsonText, {});
 
     // 5. Transform structured data back to arrays for UI compatibility
     const logos = [];
@@ -341,12 +364,33 @@ Do NOT output markdown wrappers or code blocks. Just return raw JSON.
       });
     }
 
+    // ── Guaranteed logo injection ─────────────────────────────────────────────
+    // If AI returned no logos (or returned a bad/empty URL), inject the pre-resolved one
+    const hasValidLogo = logos.some(l => l.url && l.url.startsWith('http'));
+    if (!hasValidLogo && guaranteedLogoUrl) {
+      console.log(`[AssetAgent] AI returned no valid logos. Injecting guaranteed logo: ${guaranteedLogoUrl}`);
+      logos.unshift({
+        url: guaranteedLogoUrl,
+        label: 'Brand Logo',
+        confidence: 80,
+        source: 'Auto-resolved (Clearbit / Google Favicon)',
+        resolution: 'Unknown',
+        background: 'Unknown',
+        quality: 'Medium'
+      });
+    }
+
     const favicon = structured.logo?.favicon?.url ? {
       url: structured.logo.favicon.url,
       confidence: structured.logo.favicon.confidence || 95,
       source: structured.logo.favicon.source || 'Auto',
       label: 'Favicon'
-    } : (scrapedData?.favicon || null);
+    } : (scrapedData?.favicon || (guaranteedLogoUrl ? {
+      url: guaranteedLogoUrl,
+      confidence: 75,
+      source: 'Auto-resolved fallback',
+      label: 'Favicon'
+    } : null));
 
     const colors = Object.entries(structured.colors || {}).map(([key, val]) => {
       if (!val) return null;

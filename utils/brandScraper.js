@@ -187,7 +187,7 @@ const extractColorsFromLogo = async (logoUrl) => {
 
 /**
  * Deep logo discovery from a Cheerio-loaded page.
- * Priority: og:logo > structured-data > apple-touch-icon > rel=icon SVG/PNG > img[logo] > favicon.ico
+ * Priority: JSON-LD > og:logo > apple-touch-icon > nav/header img > data-src > srcset > manifest > CSS bg > icon links
  */
 const findBestLogoUrl = ($, baseUrl) => {
   // 1. JSON-LD structured data (Schema.org Organization / Brand)
@@ -195,7 +195,8 @@ const findBestLogoUrl = ($, baseUrl) => {
   $('script[type="application/ld+json"]').each((_, el) => {
     if (jsonLdLogo) return;
     try {
-      const data = JSON.parse($(el).html() || '{}');
+      const raw = $(el).html() || '{}';
+      const data = JSON.parse(raw);
       const arr = Array.isArray(data) ? data : [data];
       for (const item of arr) {
         const type = item?.['@type']?.toLowerCase?.() || '';
@@ -203,96 +204,210 @@ const findBestLogoUrl = ($, baseUrl) => {
           jsonLdLogo = typeof item.logo === 'string' ? item.logo : item.logo?.url || item.logo?.contentUrl;
           if (jsonLdLogo) break;
         }
+        // Also check nested @graph
+        if (Array.isArray(item?.['@graph'])) {
+          for (const g of item['@graph']) {
+            const gtype = g?.['@type']?.toLowerCase?.() || '';
+            if ((gtype.includes('organization') || gtype.includes('brand')) && g.logo) {
+              jsonLdLogo = typeof g.logo === 'string' ? g.logo : g.logo?.url || g.logo?.contentUrl;
+              if (jsonLdLogo) break;
+            }
+          }
+        }
+        if (jsonLdLogo) break;
       }
     } catch { }
   });
   if (jsonLdLogo) return resolveToAbsolute(jsonLdLogo, baseUrl);
 
-  // 2. High-confidence meta / link tags (Explicit logo or apple-touch-icon)
+  // 2. High-confidence explicit meta/link tags
   const highPrioSelectors = [
-    'meta[property="og:logo"]',
-    'meta[name="twitter:logo"]',
-    'link[rel="apple-touch-icon"]'
+    { sel: 'meta[property="og:logo"]',         attr: 'content' },
+    { sel: 'meta[name="twitter:logo"]',          attr: 'content' },
+    { sel: 'link[rel="apple-touch-icon-precomposed"]', attr: 'href' },
+    { sel: 'link[rel="apple-touch-icon"]',       attr: 'href' },
   ];
-  for (const s of highPrioSelectors) {
-     const found = $(s).attr('content') || $(s).attr('href');
-     if (found) return resolveToAbsolute(found, baseUrl);
-  }
-
-  // 3. Look for explicit logo images in common navigation/header containers (Very high confidence)
-  const logoSelectors = [
-    'a[class*="logo"] img',
-    'a[id*="logo"] img',
-    '.nav-logo img',
-    '#logo img',
-    '.logo img',
-    'header img[src*="logo" i]',
-    'nav img[src*="logo" i]',
-    'img[class*="logo" i]',
-    'img[id*="logo" i]',
-    'img[class*="brand" i]',
-    'img[alt*="logo" i]',
-    'img[src*="logo" i]',
-    'img[src*="brand" i]'
-  ];
-
-  for (const s of logoSelectors) {
-    const found = $(s).attr('src');
+  for (const { sel, attr } of highPrioSelectors) {
+    const found = $(sel).attr(attr);
     if (found) return resolveToAbsolute(found, baseUrl);
   }
 
-  // 4. Structural fallback: First image in header or nav (Medium confidence)
-  const structuralLogo = 
-    $('header img').first().attr('src') || 
-    $('nav img').first().attr('src') ||
-    $('a[href="/"] img').first().attr('src') ||
-    $('a[href*="' + baseUrl + '"] img').first().attr('src');
+  // 3. Explicit logo images — check both src AND data-src (lazy-loaded)
+  const logoImgSelectors = [
+    'a[class*="logo"] img', 'a[id*="logo"] img',
+    '.nav-logo img', '#logo img', '.logo img', '.site-logo img', '.brand-logo img',
+    'header img[src*="logo" i]',  'header img[data-src*="logo" i]',
+    'nav img[src*="logo" i]',     'nav img[data-src*="logo" i]',
+    'img[class*="logo" i]',       'img[id*="logo" i]',
+    'img[class*="brand" i]',      'img[alt*="logo" i]',
+    'img[src*="logo" i]',         'img[data-src*="logo" i]',
+    'img[src*="brand" i]',        'img[data-src*="brand" i]',
+    'img[src*="-logo"]',          'img[src*="_logo"]',
+  ];
+  for (const s of logoImgSelectors) {
+    const el = $(s).first();
+    const found = el.attr('src') || el.attr('data-src') || el.attr('data-lazy-src') || el.attr('data-original');
+    if (found && !found.startsWith('data:')) return resolveToAbsolute(found, baseUrl);
+  }
 
-  if (structuralLogo) return resolveToAbsolute(structuralLogo, baseUrl);
-
-  // 5. Generic image search for "logo" or "brand" in filename/alt/class
-  const allImgs = $('img').get();
-  for (const img of allImgs) {
-    const src = $(img).attr('src');
-    const alt = $(img).attr('alt') || '';
-    const cls = $(img).attr('class') || '';
-    if (src && (
-      src.toLowerCase().includes('logo') || 
-      alt.toLowerCase().includes('logo') || 
-      cls.toLowerCase().includes('logo') ||
-      src.toLowerCase().includes('brand') ||
-      alt.toLowerCase().includes('brand') ||
-      cls.toLowerCase().includes('brand')
-    )) {
-      return resolveToAbsolute(src, baseUrl);
+  // 4. srcset fallback — take the highest resolution from a logo image's srcset
+  for (const s of ['header img', 'nav img', '.logo img', '#logo img']) {
+    const el = $(s).first();
+    const srcset = el.attr('srcset');
+    if (srcset) {
+      // Parse srcset: pick the largest descriptor URL
+      const parts = srcset.split(',').map(p => p.trim().split(/\s+/));
+      const best = parts.sort((a, b) => {
+        const wa = parseFloat(a[1]) || 0;
+        const wb = parseFloat(b[1]) || 0;
+        return wb - wa;
+      })[0]?.[0];
+      if (best) return resolveToAbsolute(best, baseUrl);
     }
   }
 
-  // 6. High resolution icons / SVGs
+  // 5. Structural fallback: first non-tiny image in header/nav/home-link
+  const structuralLogo =
+    $('header img').first().attr('src') ||
+    $('nav img').first().attr('src') ||
+    $('a[href="/"] img').first().attr('src');
+  if (structuralLogo && !structuralLogo.startsWith('data:')) return resolveToAbsolute(structuralLogo, baseUrl);
+
+  // 6. CSS background-image on logo containers (many modern sites)
+  const bgSelectors = ['.logo', '#logo', '.site-logo', '.brand-logo', '.navbar-brand', 'header .logo', 'nav .logo'];
+  for (const s of bgSelectors) {
+    const style = $(s).attr('style') || '';
+    const bgMatch = style.match(/background-image:\s*url\(['"](.*?)['"]\)/i);
+    if (bgMatch?.[1]) return resolveToAbsolute(bgMatch[1], baseUrl);
+  }
+
+  // 7. High-res icons / SVG icon links
   const iconSelectors = [
+    'link[rel="icon"][sizes="512x512"]',
+    'link[rel="icon"][sizes="256x256"]',
     'link[rel="icon"][sizes="192x192"]',
     'link[rel="icon"][sizes="144x144"]',
-    'link[rel="icon"][type*="svg"]',
+    'link[rel="icon"][type="image/svg+xml"]',
+    'link[rel="mask-icon"]',
     'link[rel="shortcut icon"]',
-    'link[rel="icon"]'
+    'link[rel="icon"]',
   ];
   for (const s of iconSelectors) {
     const found = $(s).attr('href');
     if (found) return resolveToAbsolute(found, baseUrl);
   }
 
-  // 7. Social images as low-confidence fallback (usually banner images, so low priority)
-  const socialMeta = [
-    'meta[property="og:image"]',
-    'meta[name="twitter:image"]'
-  ];
-  for (const s of socialMeta) {
-     const found = $(s).attr('content');
-     if (found) return resolveToAbsolute(found, baseUrl);
+  // 8. Web App Manifest (manifest.json often has high-res icons)
+  const manifestHref = $('link[rel="manifest"]').attr('href');
+  if (manifestHref) {
+    // We can't fetch async here, but return a signal for the caller to resolve
+    return `__MANIFEST__${resolveToAbsolute(manifestHref, baseUrl)}`;
   }
 
-  console.warn(`[Scraper] No logo found for ${baseUrl}, falling back to favicon.ico`);
-  return resolveToAbsolute('/favicon.ico', baseUrl);
+  // 9. Social image as absolute last resort before external APIs
+  const socialImg = $('meta[property="og:image"]').attr('content') || $('meta[name="twitter:image"]').attr('content');
+  if (socialImg) return resolveToAbsolute(socialImg, baseUrl);
+
+  return null; // Signal to caller: no in-page logo found — use external APIs
+};
+
+/**
+ * Try to fetch a manifest.json and extract the highest-resolution icon URL.
+ */
+const tryManifestIcon = async (manifestUrl, baseUrl) => {
+  try {
+    const { data } = await axios.get(manifestUrl, { headers: HEADERS, timeout: 5000 });
+    const icons = data?.icons || [];
+    if (!icons.length) return null;
+    // Sort by size descending and pick largest
+    const sorted = icons
+      .map(ic => ({ ...ic, size: parseInt((ic.sizes || '0x0').split('x')[0]) || 0 }))
+      .sort((a, b) => b.size - a.size);
+    const best = sorted[0]?.src;
+    return best ? resolveToAbsolute(best, baseUrl) : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Verify a URL is actually reachable and returns an image response.
+ */
+const verifyLogoUrl = async (url) => {
+  if (!url || url.startsWith('data:')) return false;
+  try {
+    const res = await axios.head(url, { headers: HEADERS, timeout: 5000, maxRedirects: 3 });
+    const ct = res.headers['content-type'] || '';
+    return ct.startsWith('image/') || ct.includes('svg') || ct.includes('icon');
+  } catch {
+    // HEAD might be blocked — try GET with small range
+    try {
+      const res = await axios.get(url, { headers: { ...HEADERS, Range: 'bytes=0-100' }, timeout: 5000, maxRedirects: 3 });
+      const ct = res.headers['content-type'] || '';
+      return ct.startsWith('image/') || ct.includes('svg') || ct.includes('icon');
+    } catch {
+      return false;
+    }
+  }
+};
+
+/**
+ * Master logo resolver: in-page → manifest → Clearbit → Google Favicon.
+ * Always returns a usable logo URL.
+ */
+export const resolveLogoWithFallbacks = async ($, baseUrl) => {
+  const parsed = new URL(baseUrl);
+  const domain = parsed.hostname; // e.g. "www.nike.com"
+  const rootDomain = domain.replace(/^www\./, ''); // e.g. "nike.com"
+
+  // ── Step 1: In-page HTML discovery ──────────────────────────────────────────
+  let candidate = findBestLogoUrl($, baseUrl);
+
+  // Handle manifest signal
+  if (candidate?.startsWith('__MANIFEST__')) {
+    const manifestUrl = candidate.replace('__MANIFEST__', '');
+    const manifestIcon = await tryManifestIcon(manifestUrl, baseUrl);
+    if (manifestIcon) candidate = manifestIcon;
+    else candidate = null;
+  }
+
+  if (candidate) {
+    const valid = await verifyLogoUrl(candidate);
+    if (valid) {
+      console.log(`[LogoResolver] ✅ In-page logo verified: ${candidate}`);
+      return candidate;
+    }
+    console.log(`[LogoResolver] ⚠️  In-page candidate failed verification: ${candidate}`);
+  }
+
+  // ── Step 2: Clearbit Logo API (covers 700k+ brands by domain) ───────────────
+  try {
+    const clearbitUrl = `https://logo.clearbit.com/${rootDomain}?size=200&format=png`;
+    const clearbitValid = await verifyLogoUrl(clearbitUrl);
+    if (clearbitValid) {
+      console.log(`[LogoResolver] ✅ Clearbit logo found: ${clearbitUrl}`);
+      return clearbitUrl;
+    }
+  } catch {
+    console.log(`[LogoResolver] Clearbit unavailable for ${rootDomain}`);
+  }
+
+  // ── Step 3: Brandfetch Logo API (another brand logo database) ───────────────
+  try {
+    const brandfetchUrl = `https://cdn.brandfetch.io/${rootDomain}/w/400/h/400?c=1id2Z0`;
+    const bfValid = await verifyLogoUrl(brandfetchUrl);
+    if (bfValid) {
+      console.log(`[LogoResolver] ✅ Brandfetch logo found: ${brandfetchUrl}`);
+      return brandfetchUrl;
+    }
+  } catch {
+    console.log(`[LogoResolver] Brandfetch unavailable for ${rootDomain}`);
+  }
+
+  // ── Step 4: Google high-res favicon (always works, even for obscure sites) ──
+  const googleFaviconUrl = `https://www.google.com/s2/favicons?domain=${rootDomain}&sz=128`;
+  console.log(`[LogoResolver] ✅ Using Google Favicon fallback: ${googleFaviconUrl}`);
+  return googleFaviconUrl;
 };
 
 /**
@@ -488,11 +603,11 @@ export const extractBrandMetadata = async (targetUrl) => {
     (twitterSite ? twitterSite : null) ||
     domain.split('.')[0].charAt(0).toUpperCase() + domain.split('.')[0].slice(1);
 
-  // 3. Logo discovery
+  // 3. Logo discovery — use the full async fallback chain
   console.log(`[Scraper] Starting logo discovery for ${url}...`);
-  const logoUrl = findBestLogoUrl($, url);
-  if (logoUrl) console.log(`[Scraper] Found best logo candidate: ${logoUrl}`);
-  else console.warn(`[Scraper] No logo candidate found for ${url}`);
+  const logoUrl = await resolveLogoWithFallbacks($, url);
+  if (logoUrl) console.log(`[Scraper] ✅ Final logo URL: ${logoUrl}`);
+  else console.warn(`[Scraper] ❌ No logo found at all for ${url}`);
 
   const faviconUrl = resolveToAbsolute(
     $('link[rel="icon"]').first().attr('href') ||
