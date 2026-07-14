@@ -317,7 +317,6 @@ Do NOT output markdown wrappers or code blocks. Just return raw JSON.
     const cleanJsonText = aiRes.trim().replace(new RegExp("```json", "g"), "").replace(new RegExp("```", "g"), "");
     const structured = safeParseLLMJson(cleanJsonText, {});
 
-
     // 5. Transform structured data back to arrays for UI compatibility
     const logos = [];
     if (structured.logo?.primary?.url) {
