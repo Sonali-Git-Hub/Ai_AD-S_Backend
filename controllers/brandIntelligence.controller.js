@@ -240,7 +240,7 @@ export const analyzeFromDocs = async (req, res) => {
 
 export const saveBrandDNA = async (req, res) => {
   try {
-    const { workspaceId, dna, logoUrl, rawKnowledgeBase, sourceType } = req.body;
+    const { workspaceId, dna, logoUrl, rawKnowledgeBase, sourceType, completed } = req.body;
     if (!workspaceId) return res.status(400).json({ success: false, error: 'workspaceId required' });
 
     const brand = await getOrCreateBrand(workspaceId);
@@ -286,7 +286,11 @@ export const saveBrandDNA = async (req, res) => {
     const wsUpdate = { lastAccessedAt: new Date() };
     if (brandName) wsUpdate.workspaceName = brandName;
     if (logoUrl) wsUpdate.logoUrl = logoUrl;  // some workspaces carry a top-level logoUrl
+    if (completed) {
+      wsUpdate['onboarding.completed'] = true;
+    }
     await SocialAgentWorkspace.findByIdAndUpdate(workspaceId, { $set: wsUpdate }).catch(() => {});
+
 
     // Prepare response showing active versions from normalized tables
     const brandObj = brand.toObject();
