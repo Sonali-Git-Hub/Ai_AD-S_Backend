@@ -1,6 +1,9 @@
 import Campaign from '../models/Campaign.js';
 import CampaignPost from '../models/CampaignPost.js';
 import * as aiService from '../services/ai.service.js';
+import * as vertexService from '../services/vertex.service.js';
+import * as openaiService from '../services/openai.service.js';
+import * as socialAgentService from '../services/socialAgent.service.js';
 import xlsx from 'xlsx';
 import mongoose from 'mongoose';
 
@@ -117,17 +120,8 @@ export const createCampaign = async (req, res) => {
     // Validations
     if (!workspaceId) return res.status(400).json({ success: false, error: 'workspaceId required' });
     if (!campaignName) return res.status(400).json({ success: false, error: 'Campaign name required' });
-    if (!campaignGoal) return res.status(400).json({ success: false, error: 'Campaign goal required' });
     if (!postingFrequency) return res.status(400).json({ success: false, error: 'Posting frequency required' });
     if (!startDate || !endDate) return res.status(400).json({ success: false, error: 'Start and End dates required' });
-    if (!platforms || !platforms.length) return res.status(400).json({ success: false, error: 'Campaign must contain at least one platform' });
-
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-
-    if (start > end) {
-      return res.status(400).json({ success: false, error: 'Start Date cannot be greater than End Date' });
-    }
 
     // 1. Fetch Brand Profile for workspace (Brand DNA)
     const { default: BrandProfile } = await import('../models/BrandProfile.js');
@@ -137,16 +131,39 @@ export const createCampaign = async (req, res) => {
     const audience = Array.isArray(brand?.targetAudience) ? brand.targetAudience.join(', ') : (brand?.targetAudience || 'general audience');
     const tone = Array.isArray(brand?.toneOfVoice) ? brand.toneOfVoice.join(', ') : (brand?.toneOfVoice || 'professional');
 
+    // Fallbacks for campaignGoal and platforms (removed from UI form)
+    let finalGoal = campaignGoal;
+    if (!finalGoal) {
+      finalGoal = brand?.structuredIdentity?.goal || 'Brand Awareness';
+    }
+
+    let finalPlatforms = platforms;
+    if (!finalPlatforms || !finalPlatforms.length) {
+      finalPlatforms = brand?.structuredIdentity?.platform_focus || [];
+    }
+    if (!finalPlatforms || !finalPlatforms.length) {
+      finalPlatforms = ['Instagram', 'LinkedIn'];
+    }
+    // Standardize naming to capitalized form
+    finalPlatforms = finalPlatforms.map(p => p.charAt(0).toUpperCase() + p.slice(1));
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    if (start > end) {
+      return res.status(400).json({ success: false, error: 'Start Date cannot be greater than End Date' });
+    }
+
     // 2. Create the Campaign document
     const campaign = new Campaign({
       workspaceId,
       campaignName,
-      campaignGoal,
+      campaignGoal: finalGoal,
       campaignMonth,
       startDate: start,
       endDate: end,
       postingFrequency,
-      platforms,
+      platforms: finalPlatforms,
       status: 'Active',
       createdBy: req.user?.email || 'system'
     });
@@ -155,66 +172,185 @@ export const createCampaign = async (req, res) => {
     // 3. Calculate publishing dates
     const calculatedDates = calculatePublishingDates(startDate, endDate, postingFrequency);
 
-    // Content Types
-    const contentTypes = ['Image', 'Carousel', 'Video', 'Reel', 'Infographic'];
+    // Only Image and Carousel are supported content types now
+    const contentTypes = ['Image', 'Carousel'];
 
-    // 4. Create day cards distributed intelligently
-    const createdPosts = [];
+    // Helper to get logical postFor based on campaign stage
+    const getPostForByStage = (stage, index) => {
+      const awarenessOpts = [
+        "Brand Awareness", "Educational", "Behind The Scenes", "Company Culture", 
+        "FAQ", "Brand Story", "Quote", "Motivational Quote", "Industry Insights", "CSR Activity"
+      ];
+      const considerationOpts = [
+        "Product Promotion", "Customer Testimonial", "Customer Success Story", "Tips & Tricks", 
+        "How To Guide", "Team Introduction", "Feature Highlight", "Case Study", "Before & After"
+      ];
+      const conversionOpts = [
+        "Special Offer", "Festival Offer", "Flash Sale", "Discount", "Product Launch", 
+        "Event Promotion", "Announcement", "Poll", "Contest", "Giveaway", "Engagement Post",
+        "Seasonal Campaign", "Limited Time Offer", "New Arrival", "Service Highlight", 
+        "Partnership", "Milestone Celebration", "User Generated Content"
+      ];
+
+      if (stage === 'Awareness') {
+        return awarenessOpts[index % awarenessOpts.length];
+      } else if (stage === 'Consideration') {
+        return considerationOpts[index % considerationOpts.length];
+      } else {
+        return conversionOpts[index % conversionOpts.length];
+      }
+    };
+
+    // 4. Build raw campaign posts list
+    const rawPosts = [];
     const totalPosts = calculatedDates.length;
 
     for (let i = 0; i < totalPosts; i++) {
       const pubDate = calculatedDates[i];
+      const platform = finalPlatforms[i % finalPlatforms.length];
+      const postType = contentTypes[i % contentTypes.length]; // Image or Carousel
+      const carouselImages = postType === 'Carousel' ? (2 + (i % 4)) : 0; // 2, 3, 4, or 5 images
       
-      // Platform cyclic distribution
-      const platform = platforms[i % platforms.length];
-
-      // Content Type distribution
-      const contentType = contentTypes[i % contentTypes.length];
-
-      // Campaign Stage funnel distribution
       let campaignStage = 'Awareness';
       let postObjective = 'Awareness';
 
       const progressFraction = i / totalPosts;
       if (progressFraction < 0.35) {
         campaignStage = 'Awareness';
-        // Distribute Awareness objectives
         const objectives = ['Awareness', 'Educational', 'FAQ'];
         postObjective = objectives[i % objectives.length];
       } else if (progressFraction < 0.7) {
         campaignStage = 'Consideration';
-        // Distribute Consideration objectives
         const objectives = ['Behind The Scenes', 'Product Feature', 'Customer Story', 'Testimonial'];
         postObjective = objectives[i % objectives.length];
       } else {
         campaignStage = 'Conversion';
-        // Distribute Conversion objectives
         const objectives = ['Offer', 'CTA'];
         postObjective = objectives[i % objectives.length];
       }
 
-      // Day name
+      const postFor = getPostForByStage(campaignStage, i);
       const day = pubDate.toLocaleDateString('en-US', { weekday: 'long' });
+      const dateStr = pubDate.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' });
 
-      // Prompt Generation using Brand DNA
-      const prompt = `Create an engaging ${platform} ${contentType} post for ${companyName} (industry: ${industry}).
-Campaign Stage: ${campaignStage}
-Post Objective: ${postObjective}
-Goal: ${campaignGoal}
-Target Audience: ${audience}
-Tone of Voice: ${tone}
-Write a high-converting caption, including trending hashtags and a strong CTA matching the objective.`;
+      rawPosts.push({
+        pubDate,
+        day,
+        platform,
+        postType,
+        carouselImages,
+        campaignStage,
+        postObjective,
+        postFor,
+        dateStr
+      });
+    }
+
+    // 5. Generate AI Image Prompts and Caption Prompts dynamically in batches of 5
+    const batchSize = 5;
+    const allGeneratedPrompts = [];
+
+    const personality = brand?.brandPersonality?.traits ? brand.brandPersonality.traits.join(', ') : 'Professional, modern';
+    const colors = brand?.brandColors || brand?.visualIdentity?.brandColors || ['Blue', 'Orange'];
+    const colorsStr = Array.isArray(colors) ? colors.join(', ') : colors;
+    const visualStyle = brand?.visualIdentity?.visualTheme || brand?.visualIdentity?.designStyle || 'premium, clean, vibrant';
+    const productsServices = brand?.structuredIdentity?.products_services || brand?.productsServices?.products || ['our products and services'];
+    const productsStr = Array.isArray(productsServices) ? productsServices.join(', ') : productsServices;
+
+    for (let i = 0; i < rawPosts.length; i += batchSize) {
+      const batch = rawPosts.slice(i, i + batchSize);
+      
+      const systemInstruction = `You are a world-class Social Media Creative Director and AI Prompt Engineer.
+Your goal is to write extremely detailed, production-ready AI Image Prompts (for Flux, Midjourney, DALL-E) and separate AI Caption Prompts (outlining Hook, Story angle, CTA, hashtags direction).
+You must output strictly a valid JSON array matching the requested schema. No markdown, no HTML, no explanation — only raw JSON array.`;
+
+      const promptText = `Generate dynamic, brand-customized prompts for a batch of social media posts.
+
+BRAND DNA:
+- Brand Name: ${companyName}
+- Industry: ${industry}
+- Target Audience: ${audience}
+- Brand Colors: ${colorsStr}
+- Visual Theme/Style: ${visualStyle}
+- Products/Services: ${productsStr}
+- Personality/Voice: ${personality} (${tone})
+
+CAMPAIGN:
+- Name: ${campaignName}
+- Goal: ${finalGoal}
+
+BATCH OF POSTS TO GENERATE PROMPTS FOR:
+${batch.map((p, idx) => `Post #${i + idx + 1}:
+  - Date: ${p.dateStr} (${p.day})
+  - Platform: ${p.platform}
+  - Post Type: ${p.postType}
+  - Carousel Images: ${p.carouselImages > 0 ? `${p.carouselImages} slides` : 'N/A'}
+  - Post For (Objective): ${p.postFor}
+  - Campaign Stage: ${p.campaignStage}
+`).join('\n')}
+
+CRITICAL REQUIREMENTS:
+1. Every card MUST be different. Vary the creative concept, scene setup, background setting, camera angle, composition, lighting style, color scheme, and focus across all posts. Even if Goal/Stage is same, make it feel unique!
+2. Prompts must be brand-relevant. Do NOT use generic prompts. Incorporate the brand name (${companyName}) and key brand properties.
+3. The AI Image Prompt must be detailed and production-ready for image generators like Flux/Midjourney. Avoid vague instructions. Include background details, camera style, colors, visual metaphors.
+4. The AI Caption Prompt must be a structured prompt outlining: Hook direction, Story angle, Key messaging, Brand voice tone, CTA style, Hashtag direction, Emoji style.
+5. Return strictly a JSON array of objects with the exact structure:
+[
+  {
+    "imagePrompt": "Detailed visual prompt here...",
+    "captionPrompt": "Detailed caption prompt specifying hook, story, key message, voice, CTA, hashtags..."
+  },
+  ...
+]
+`;
+
+      try {
+        const aiRes = await aiService.chat(promptText, null, { systemInstruction });
+        let responseText = aiRes?.text || '[]';
+        responseText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
+        const batchResults = JSON.parse(responseText);
+
+        if (Array.isArray(batchResults)) {
+          allGeneratedPrompts.push(...batchResults);
+        } else {
+          throw new Error('Response is not an array');
+        }
+      } catch (err) {
+        console.error(`Prompt generation failed for batch starting at ${i}, using fallback`, err);
+        // Fallback prompts
+        batch.forEach((p, idx) => {
+          allGeneratedPrompts.push({
+            imagePrompt: `Design a premium, high-converting visual for ${companyName} featuring ${productsStr} for ${p.postFor}. Highlight brand colors ${colorsStr} with professional composition and modern lighting.`,
+            captionPrompt: `Write an engaging caption for ${companyName} audience (${audience}) focusing on ${p.postFor}. Style: Hook focusing on value, Story angle around brand benefits, CTA pointing to bio link, 5 relevant hashtags, friendly emoji tone.`
+          });
+        });
+      }
+    }
+
+    // 6. Create CampaignPost records in database
+    const createdPosts = [];
+    for (let i = 0; i < totalPosts; i++) {
+      const p = rawPosts[i];
+      const promptsForPost = allGeneratedPrompts[i] || {
+        imagePrompt: `Design a premium, high-converting visual for ${companyName} featuring ${productsStr} for ${p.postFor}. Highlight brand colors ${colorsStr} with professional composition and modern lighting.`,
+        captionPrompt: `Write an engaging caption for ${companyName} audience (${audience}) focusing on ${p.postFor}. Style: Hook focusing on value, Story angle around brand benefits, CTA pointing to bio link, 5 relevant hashtags, friendly emoji tone.`
+      };
 
       const campaignPost = new CampaignPost({
         campaignId: campaign._id,
         workspaceId,
-        date: pubDate,
-        day,
-        platform,
-        contentType,
-        campaignStage,
-        postObjective,
-        prompt,
+        date: p.pubDate,
+        day: p.day,
+        platform: p.platform,
+        contentType: p.postType, // Keep contentType for legacy compatibility
+        postType: p.postType,
+        carouselImages: p.carouselImages,
+        postFor: p.postFor,
+        imagePrompt: promptsForPost.imagePrompt,
+        captionPrompt: promptsForPost.captionPrompt,
+        campaignStage: p.campaignStage,
+        postObjective: p.postObjective,
+        prompt: promptsForPost.imagePrompt, // Map prompt field for legacy compatibility
         status: 'Draft',
         approvalStatus: 'Pending',
         bestPostingTime: '11:00 AM'
@@ -238,21 +374,28 @@ export const getCampaign = async (req, res) => {
   try {
     const { campaignId } = req.params;
     let campaign = null;
+    let wsId = null;
 
     if (mongoose.Types.ObjectId.isValid(campaignId)) {
       campaign = await Campaign.findById(campaignId);
-      if (!campaign) {
+      if (campaign) {
+        wsId = campaign.workspaceId;
+      } else {
         // Fallback: try finding the most recent active campaign for this workspaceId
         campaign = await Campaign.findOne({ workspaceId: campaignId }).sort({ createdAt: -1 });
+        wsId = campaignId;
       }
     }
 
     if (!campaign) {
-      return res.json({ success: true, campaign: null, posts: [] });
+      // If no campaign generated yet, try to find any existing ones to populate history
+      const campaigns = wsId ? await Campaign.find({ workspaceId: wsId }).sort({ createdAt: -1 }) : [];
+      return res.json({ success: true, campaign: null, posts: [], campaigns });
     }
 
     const posts = await CampaignPost.find({ campaignId: campaign._id }).sort({ date: 1 });
-    return res.json({ success: true, campaign, posts });
+    const campaigns = await Campaign.find({ workspaceId: wsId || campaign.workspaceId }).sort({ createdAt: -1 });
+    return res.json({ success: true, campaign, posts, campaigns });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }
@@ -317,16 +460,20 @@ JSON schema to return:
   "bestPostingTime": "string formatted time e.g. '03:30 PM'"
 }`;
 
-  const promptText = `Generate post copy for ${post.platform} with format ${post.contentType}.
-The objective is ${post.postObjective} during the ${post.campaignStage} stage of our marketing campaign.
+  const promptText = `Generate post copy for ${post.platform} matching the post format type ${post.postType || post.contentType || 'Image'}.
+We have pre-defined prompts that we must strictly follow:
+1. Strategic AI Image Prompt:
+"${post.imagePrompt || post.prompt}"
+
+2. Strategic AI Caption Prompt:
+"${post.captionPrompt}"
+
 Brand DNA info:
 - Website: ${website}
 - Brand Voice/Tone: ${tone}
 
-Prompt context from user:
-"${post.prompt}"
-
-Generate the caption, hashtags, cta, expected engagement, expected reach, aiScore, and bestPostingTime. Return ONLY the strict JSON object.`;
+Based strictly on the strategic AI Caption Prompt ("${post.captionPrompt}"), write the actual social media copy. The caption must closely match the specified hook, story angle, CTA, emojis, and hashtags style from the prompt.
+Generate the actual caption, hashtags, cta, expected engagement, expected reach, aiScore, and bestPostingTime. Return ONLY the strict JSON object.`;
 
   const aiRes = await aiService.chat(promptText, null, { systemInstruction });
   let responseText = aiRes?.text || '';
@@ -371,6 +518,7 @@ export const generateSinglePost = async (req, res) => {
     const { default: BrandProfile } = await import('../models/BrandProfile.js');
     const brand = await BrandProfile.findOne({ workspaceId: post.workspaceId });
 
+    // 1. Generate social post copy / caption matching strategic prompts
     const content = await generateCampaignPostContent(post, brand);
 
     post.caption = content.caption;
@@ -380,6 +528,30 @@ export const generateSinglePost = async (req, res) => {
     post.expectedEngagement = content.expectedEngagement || 80;
     post.aiScore = content.aiScore || 90;
     post.bestPostingTime = content.bestPostingTime || '11:00 AM';
+
+    // 2. Generate the actual AI image following the displayed imagePrompt
+    const imagePrompt = post.imagePrompt || post.prompt;
+    if (imagePrompt) {
+      try {
+        let buffer;
+        try {
+          buffer = await vertexService.generateImageImagen(imagePrompt);
+        } catch (err) {
+          console.warn("Imagen generation failed, trying Dalle...", err.message);
+          buffer = await openaiService.generateImageDalle(imagePrompt);
+        }
+
+        if (buffer) {
+          const folder = `brands/${post.workspaceId}/generated`;
+          const fileName = `calendar_${post._id}_${Date.now()}.png`;
+          const uploadResult = await socialAgentService.uploadBufferToGCS(buffer, fileName, 'image/png', folder);
+          post.generatedImage = uploadResult.url;
+        }
+      } catch (imgErr) {
+        console.error(`Failed to generate image for post ID ${post._id}:`, imgErr);
+      }
+    }
+
     post.status = 'Generated';
     post.approvalStatus = 'Pending';
 
@@ -560,3 +732,115 @@ export const createCampaignPost = async (req, res) => {
     return res.status(500).json({ success: false, error: error.message });
   }
 };
+
+/**
+ * POST /api/calendar/recommendations
+ * Calls Gemini AI to generate dynamic, context-aware campaign recommendations
+ * based on the campaign's date span, platforms, goals, and brand DNA.
+ */
+export const getAIRecommendations = async (req, res) => {
+  try {
+    const { workspaceId, startDate, endDate, platforms, campaignGoals, campaignGoal, campaignName, postingFrequency } = req.body;
+
+    if (!workspaceId) return res.status(400).json({ success: false, error: 'workspaceId required' });
+
+    // Fetch Brand DNA
+    const { default: BrandProfile } = await import('../models/BrandProfile.js');
+    const brand = await BrandProfile.findOne({ workspaceId });
+    const companyName = brand?.companyName || 'our brand';
+    const industry = brand?.targetIndustry || 'general industry';
+    const audience = Array.isArray(brand?.targetAudience)
+      ? brand.targetAudience.join(', ')
+      : (brand?.targetAudience || 'general audience');
+    const tone = Array.isArray(brand?.toneOfVoice)
+      ? brand.toneOfVoice.join(', ')
+      : (brand?.toneOfVoice || 'professional');
+    const usp = brand?.usp || '';
+
+    // Format date range for AI context
+    const start = startDate ? new Date(startDate) : new Date();
+    const end = endDate ? new Date(endDate) : new Date(start.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const startFormatted = start.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+    const endFormatted = end.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+    const totalDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+
+    const platformsList = Array.isArray(platforms) ? platforms.join(', ') : (platforms || 'Instagram');
+    const goalsList = Array.isArray(campaignGoals) && campaignGoals.length > 0
+      ? campaignGoals.join(', ')
+      : (campaignGoal || 'Brand Awareness');
+
+    const systemInstruction = `You are an expert social media strategist and campaign planner.
+You specialize in identifying high-impact engagement opportunities for brands based on their campaign timeline, selected platforms, and target audience.
+You must return ONLY a valid JSON array. No markdown, no explanation, no preamble — just the raw JSON array.`;
+
+    const promptText = `Analyze the following campaign and generate exactly 4 highly specific, actionable recommendations to maximize engagement and reach.
+
+BRAND CONTEXT:
+- Company: ${companyName}
+- Industry: ${industry}
+- Target Audience: ${audience}
+- Tone of Voice: ${tone}
+- USP: ${usp}
+
+CAMPAIGN DETAILS:
+- Campaign Name: ${campaignName || 'New Campaign'}
+- Date Range: ${startFormatted} to ${endFormatted} (${totalDays} days)
+- Platforms: ${platformsList}
+- Campaign Goals: ${goalsList}
+- Posting Frequency: ${postingFrequency || '3x Per Week'}
+
+INSTRUCTIONS:
+1. Detect any major Indian festivals, events, or culturally significant dates within the date range (e.g., Diwali, Holi, Independence Day, IPL, Republic Day, etc.)
+2. Identify the best-performing days/times for the selected platforms
+3. Suggest specific content types or formats that work best for the stated goals
+4. Recommend a strategic content mix that aligns with the brand's audience and tone
+
+For each recommendation provide:
+- title: Short punchy title (max 7 words, uppercase style)
+- desc: One actionable sentence describing the opportunity and what to do
+- impact: "High" | "Medium" (predicted engagement impact)
+- type: A short identifier slug like "festival_diwali", "best_day_tuesday", "content_reels", "platform_instagram" — used to categorize the suggestion
+
+Return ONLY this exact JSON array format (no extra text):
+[
+  { "title": "...", "desc": "...", "impact": "High", "type": "..." },
+  { "title": "...", "desc": "...", "impact": "Medium", "type": "..." },
+  { "title": "...", "desc": "...", "impact": "High", "type": "..." },
+  { "title": "...", "desc": "...", "impact": "Medium", "type": "..." }
+]`;
+
+    const aiRes = await aiService.chat(promptText, null, { systemInstruction });
+    let responseText = aiRes?.text || '[]';
+
+    // Strip markdown code fences if present
+    responseText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
+
+    let recommendations;
+    try {
+      recommendations = JSON.parse(responseText);
+      if (!Array.isArray(recommendations)) throw new Error('Not an array');
+    } catch (parseErr) {
+      console.warn('AI recommendations JSON parse failed, using fallback', parseErr.message);
+      recommendations = [
+        {
+          title: 'Best Engagement Window Detected',
+          desc: `Posts on ${platformsList.split(',')[0]?.trim() || 'Instagram'} perform best between Tue–Thu. Align your highest-value posts to these days.`,
+          impact: 'High',
+          type: 'best_day'
+        },
+        {
+          title: 'Audience-Optimized Content Mix',
+          desc: `Mix Reels and Carousels to maximize reach for ${audience} on ${platformsList}.`,
+          impact: 'Medium',
+          type: 'content_mix'
+        }
+      ];
+    }
+
+    return res.json({ success: true, recommendations });
+  } catch (error) {
+    console.error('getAIRecommendations error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
