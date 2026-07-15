@@ -18,5 +18,7 @@ router.post('/post/:id/generate', creditMiddleware, campaignController.generateS
 router.post('/generate-all', creditMiddleware, campaignController.generateAllPosts);
 router.post('/regenerate-all', creditMiddleware, campaignController.regenerateAllPosts);
 router.post('/export', campaignController.exportCampaign);
+router.post('/recommendations', creditMiddleware, campaignController.getAIRecommendations);
 
 export default router;
+
