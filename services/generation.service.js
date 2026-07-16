@@ -3,6 +3,7 @@ import * as vertexService from './vertex.service.js';
 import { safeParseLLMJson } from '../utils/jsonUtils.js';
 import { AskOpenAIRaw } from './openai.service.js';
 import { AskVertexRaw } from './vertex.service.js';
+import { analyzeImageWithAI } from './visionAI.service.js';
 import * as socialAgentService from './socialAgent.service.js';
 import SocialAgentWorkspace from '../models/SocialAgentWorkspace.js';
 import BrandProfile from '../models/BrandProfile.js';
@@ -1269,6 +1270,34 @@ export const generateManualPost = async (workspaceId, payload) => {
   const brandDesc = brand ? (brand.extractedBrandSummary || brand.companyOverviewText || '') : '';
   const brandContext = brand ? `Name: ${brand.companyName || 'Brand'}, Industry: ${brand.targetIndustry || 'General'}, Description: ${brandDesc}` : 'No brand profile set';
 
+  // --- IMAGE CONTEXT ENRICHMENT ---
+  // If user uploaded a reference image, analyze it with Vision AI and inject context into the prompt
+  let imageContextBlock = '';
+  if (uploadedFiles && uploadedFiles.length > 0) {
+    const firstImageFile = uploadedFiles.find(f => f.mimetype && f.mimetype.startsWith('image/'));
+    if (firstImageFile) {
+      try {
+        console.log(`[ManualGen] Reference image detected. Analyzing with Vision AI...`);
+        const visionData = await analyzeImageWithAI(firstImageFile.url, workspaceId, 'wizard-gen');
+        imageContextBlock = `
+    REFERENCE IMAGE ANALYSIS (User uploaded this image — the post MUST be based on it):
+    - Scene: ${visionData.scene || 'Not detected'}
+    - Detected Objects: ${(visionData.objects || []).join(', ') || 'N/A'}
+    - Mood/Emotion: ${visionData.mood || 'N/A'}
+    - Dominant Colors: ${(visionData.colors || []).join(', ') || 'N/A'}
+    - Environment: ${visionData.environment || 'N/A'}
+    - Composition: ${visionData.composition || 'N/A'}
+    - Detected Brand/Text in Image: ${visionData.detectedText || visionData.brandName || 'None'}
+    - Suggested Social Category: ${visionData.socialCategory || 'General'}
+    
+    IMPORTANT: Use the above image context to write a post that describes or promotes what is shown in the image. The hook, captions, and CTA should directly reference the visual content of the image.`;
+        console.log(`[ManualGen] Vision AI analysis successful. Injecting image context into prompt.`);
+      } catch (visionErr) {
+        console.warn(`[ManualGen] Vision AI analysis failed (non-critical): ${visionErr.message}. Proceeding without image context.`);
+      }
+    }
+  }
+
   const systemPrompt = `
     You are an expert Social Media Copywriter, growth marketer, and AI prompt engineer.
     Create a highly engaging, custom social media post for ${platform} based on the user's manual selections.
@@ -1286,6 +1315,7 @@ export const generateManualPost = async (workspaceId, payload) => {
     
     USER'S CORE DESCRIPTION / PROMPT:
     "${description}"
+    ${imageContextBlock}
     
     STRICT INSTRUCTIONS:
     1. LANGUAGE: You MUST write all user-facing copy (hook, captions, cta, variations) in ${language || 'English'}. If the language is "Hinglish", write Hindi conversational text using the Latin/English alphabet.
@@ -1305,6 +1335,7 @@ export const generateManualPost = async (workspaceId, payload) => {
        - Generate SEO Keywords: ${enhancements?.generateSEOKeywords !== false ? 'YES' : 'NO'} (If NO, return empty seoKeywords array)
        - Generate Image Prompt: ${enhancements?.generateImagePrompt !== false ? 'YES' : 'NO'} (If NO, return empty imagePrompt)
        - Generate Alt Text: ${enhancements?.generateAltText !== false ? 'YES' : 'NO'} (If NO, return empty altText)
+    ${imageContextBlock ? '7. IMAGE-BASED POST: Since a reference image was provided, the image prompt output should describe an enhanced version of the same visual scene, NOT a different scene.' : ''}
     
     OUTPUT JSON FORMAT (STRICT):
     {
