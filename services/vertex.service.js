@@ -200,11 +200,28 @@ export const retrieveContextFromRag = async (query, topK = 8, category = 'LEGAL'
 
             console.log(`[RAG DEBUG] Chunk Source: ${gcsUri || 'N/A'} | DB Doc: ${doc ? 'FOUND' : 'NOT_IN_DB'} | DB Category: ${doc?.category || 'NONE'} | Requested: ${category}`);
 
-            // Enforce strict category checks to prevent database context cross-pollution
-            if (!doc || doc.category !== category) {
-                console.log(`[RAG DEBUG] Skipping chunk: category ${doc ? doc.category : 'N/A'} does not match requested ${category}`);
+            // Enforce category checks - but with intelligent fallbacks
+            let chunkCategory = doc?.category || null;
+
+            // If doc not found in DB, try to infer category from GCS path subfolder
+            if (!chunkCategory && gcsUri) {
+                const uriPath = gcsUri.toLowerCase();
+                if (uriPath.includes('/aiadasset/')) chunkCategory = 'AIADASSET';
+                else if (uriPath.includes('/legal/')) chunkCategory = 'LEGAL';
+                else if (uriPath.includes('/finance/')) chunkCategory = 'FINANCE';
+                else if (uriPath.includes('/general/')) chunkCategory = 'GENERAL';
+                else chunkCategory = 'GENERAL'; // default for old docs without subfolder
+                if (chunkCategory) {
+                    console.log(`[RAG DEBUG] Inferred category from GCS path: ${chunkCategory}`);
+                }
+            }
+
+            // Skip chunks that don't match the requested category
+            if (chunkCategory !== category) {
+                console.log(`[RAG DEBUG] Skipping chunk: category '${chunkCategory}' does not match requested '${category}'`);
                 continue;
             }
+
 
             if (!context.text || context.text.trim().length === 0) continue;
 
@@ -223,7 +240,7 @@ export const retrieveContextFromRag = async (query, topK = 8, category = 'LEGAL'
 
             sources.push({
                 title: sourceName,
-                url: sourceUrl || 'https://uwo24.com/',
+                url: sourceUrl || 'https://aisa24.com/',
                 snippet: context.text ? context.text.substring(0, 150) + '...' : '',
                 document_title: sourceName,
                 source_type: doc ? 'KNOWLEDGE_BASE' : 'RAG_CORPUS',
@@ -252,7 +269,7 @@ export const retrieveContextFromRag = async (query, topK = 8, category = 'LEGAL'
         if (uniqueSources.length === 0) {
             uniqueSources.push({
                 title: "Unified Web Options",
-                url: "https://uwo24.com/",
+                url: "https://aisa24.com/",
                 snippet: "Official information about AISA and UWO services.",
                 document_title: "Unified Web Options",
                 source_type: "URL",
@@ -331,8 +348,11 @@ export const detectRAGNeed = async (query) => {
             return false;
         }
 
-        // 2. STRICT KEYWORD MATCHING: Only trigger RAG for AISA, AI MALL, UWO, and specific features
-        const ragKeywords = ['aisa', 'ai mall', 'uwo', 'feature', 'pricing', 'plan', 'mall', 'refund', 'policy', 'capabilities'];
+        // 2. STRICT KEYWORD MATCHING: Only trigger RAG for AISA, AI MALL, UWO, AI Ads, and specific features
+        const ragKeywords = [
+            'aisa', 'ai mall', 'uwo', 'feature', 'pricing', 'plan', 'mall', 'refund', 'policy', 'capabilities',
+            'ai ad', 'aiads', 'campaign', 'calendar', 'calender', 'brand', 'workspace', 'social media', 'studio', 'post', 'rag'
+        ];
         const hasRagKeyword = ragKeywords.some(k => lower.includes(k));
 
         if (hasRagKeyword) {

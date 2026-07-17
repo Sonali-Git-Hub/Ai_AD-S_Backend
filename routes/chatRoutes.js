@@ -24,7 +24,7 @@ import { executeImagePipeline, executeVideoPipeline } from "../services/generati
 import { selectVideoModel } from "../services/modelSelector.js";
 import { getMemoryContext, extractUserMemory, updateMemory } from "../utils/memoryService.js";
 import { subscriptionService, checkPremiumAccess, checkQuota, incrementQuota } from '../services/subscriptionService.js';
-import { retrieveContextFromRag, detectRAGNeed } from "../services/vertex.service.js";
+import { retrieveContextFromRag, detectRAGNeed, AskVertexRaw } from "../services/vertex.service.js";
 import * as configService from "../services/configService.js";
 import Knowledge from "../models/Knowledge.model.js";
 import * as webSearchService from "../services/webSearch.service.js";
@@ -1068,25 +1068,38 @@ router.post('/ai-ads-assistant', async (req, res) => {
       });
     }
 
-    // 2. Generate response using Gemini strictly based on the retrieved context
-    const prompt = `You are the AI Ads™ Social Media Assistant.
-You must answer the user query based ONLY on the provided RAG context below. Do not make up any information outside of the context. If the context does not contain enough information to answer, state clearly that the uploaded documents do not contain that information.
+    // 2. Generate response using AskVertexRaw — correctly handles both Vertex AI and Gemini API SDK formats
+    const prompt = `You are the Elite AI Ads™ Advertising & Marketing Advisor and Social Media Expert.
+Your purpose is to provide professional, executive-level marketing, campaign, and social media guidance to users.
+
+### CORE INSTRUCTIONS:
+1. **Persona**: Write as a senior social media director and creative marketing advisor. Use a strategic, professional, encouraging, and authoritative tone. Use formatted sections, bullet points, and clear headings where appropriate.
+2. **Project Feature Inquiries (AISA / AI Ads)**: When the user asks about AISA's features, capabilities, pricing, workflows, or target categories, rely on the **RAG Context** below as the absolute source of truth.
+3. **Marketing & Advisory Inquiries**: When the user asks for campaign strategies, post ideas, growth advice, copy optimization, targeting, or general marketing solutions, blend your advanced general marketing expertise with the RAG Context to provide high-value, actionable solutions.
+4. **Bridging**: Always suggest how the user can leverage AISA's AI Ads features (like the Content Calendar, Brand DNA Workspace, and automatic multi-platform scheduling) to solve their real-world marketing challenges.
 
 RAG Context:
 ${ragContext.text}
 
-User Query:
-${query}
+User Query: ${query}
 
-Answer:`;
+Expert Advisor Answer:`;
 
-    const result = await generativeModel.generateContent(prompt);
-    let botText = result.response?.text || result.text || '';
-    if (typeof botText === 'function') {
-      botText = await botText();
+    // ✅ AskVertexRaw correctly handles both @google-cloud/vertexai and @google/generative-ai response formats
+    let botText = '';
+    try {
+      botText = await AskVertexRaw(prompt, {
+        maxOutputTokens: 2048,
+        temperature: 0.3,
+        modelOverride: 'gemini-2.5-flash'
+      });
+    } catch (genErr) {
+      console.error('[AI-ADS-CHAT] LLM generation error:', genErr.message);
+      botText = '';
     }
-    if (!botText) {
-      botText = "I encountered an error generating a response from the uploaded documents.";
+
+    if (!botText || botText.trim().length === 0) {
+      botText = "I was able to retrieve context from your uploaded documents but couldn't generate a response. Please try again in a moment.";
     }
 
     return res.json({

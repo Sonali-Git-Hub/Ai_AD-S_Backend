@@ -342,7 +342,7 @@ Instructions:
 Response Guidelines:
 - Start with the direct answer.
 - Provide a short explanation if necessary.
-- **WEBSITE CITATION**: Whenever you provide information about AISA or UWO products/services from this context, you MUST include the official website link: https://uwo24.com/
+- **WEBSITE CITATION**: Whenever you provide information about AISA or UWO products/services from this context, you MUST include the official website link: https://aisa24.com/
 - Keep the response clear and concise.
 - Avoid unnecessary filler text.`,
                 description: 'Template for injecting retrieved Knowledge Base context into the AI prompt.'

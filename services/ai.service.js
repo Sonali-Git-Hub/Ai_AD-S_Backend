@@ -371,12 +371,42 @@ Maintain any text response outside the JSON block.`;
             // PRIORITY 2: Company Knowledge Base (Vertex RAG)
             let ragContext = null;
             if (needsRAG) {
-                const targetCategory = (mode === 'LEGAL_TOOLKIT' || legalInstruction) ? 'LEGAL' : 'GENERAL';
+                let targetCategory = 'GENERAL';
+                if (mode === 'LEGAL_TOOLKIT' || legalInstruction) {
+                    targetCategory = 'LEGAL';
+                } else {
+                    const lowerQuery = (message || '').toLowerCase();
+                    // Comprehensive AI Ads keyword detection
+                    if (
+                        lowerQuery.includes('ai ad') ||
+                        lowerQuery.includes('aiads') ||
+                        lowerQuery.includes('ai ads') ||
+                        lowerQuery.includes('campaign') ||
+                        lowerQuery.includes('content calendar') ||
+                        lowerQuery.includes('content calender') ||
+                        lowerQuery.includes('brand workspace') ||
+                        lowerQuery.includes('social media post') ||
+                        lowerQuery.includes('social media agent') ||
+                        lowerQuery.includes('ad generation') ||
+                        lowerQuery.includes('ad creative') ||
+                        lowerQuery.includes('aisa feature') ||
+                        lowerQuery.includes('aisa ka feature') ||
+                        lowerQuery.includes('aisa features')
+                    ) {
+                        targetCategory = 'AIADASSET';
+                    }
+                }
                 logger.info(`[RAG-Pipeline] Triggering Vertex AI Retrieval... (Category: ${targetCategory})`);
                 ragContext = await vertexService.retrieveContextFromRag(rewrittenQuery, 8, targetCategory);
 
+                // ✅ If AIADASSET returns no results, fallback to GENERAL category docs
+                if ((!ragContext || !ragContext.sources || ragContext.sources.length === 0) && targetCategory === 'AIADASSET') {
+                    logger.warn(`[RAG-Pipeline] AIADASSET returned no results. Trying GENERAL category as fallback...`);
+                    ragContext = await vertexService.retrieveContextFromRag(rewrittenQuery, 8, 'GENERAL');
+                }
+
                 if (!ragContext || !ragContext.sources || ragContext.sources.length === 0) {
-                    logger.warn(`[RAG-Pipeline] ⚠️ No context found. Allowing fallback handling.`);
+                    logger.warn(`[RAG-Pipeline] ⚠️ No context found in any category. Allowing fallback handling.`);
                 } else {
                     logger.info(`[RAG-Pipeline] ✅ Successfully retrieved context with ${ragContext.sources.length} sources.`);
                 }
@@ -408,7 +438,7 @@ Maintain any text response outside the JSON block.`;
             if (ragContext && ragContext.sources && ragContext.sources.length > 0) {
                 const promptWithMemory = buildMemoryPrompt(message);
                 // Step 4: Answer Generation (Context + Original Question)
-                const ragInstructionWithLink = `${dynamicSystemInstruction}\n\n### WEBSITE CITATION RULE:\nWhenever you provide information about AISA or UWO based on the provided company documents, you MUST mention the official website: https://uwo24.com/`;
+                const ragInstructionWithLink = `${dynamicSystemInstruction}\n\n### WEBSITE CITATION RULE:\nWhenever you provide information about AISA or UWO based on the provided company documents, you MUST mention the official website: https://aisa24.com/`;
 
                 // --- DYNAMIC LANGUAGE INSTRUCTION ---
                 let langContext = "";
