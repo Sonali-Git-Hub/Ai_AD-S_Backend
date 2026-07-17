@@ -13,6 +13,8 @@ const errorOccurrenceSchema = new mongoose.Schema({
     device: { type: String },
     userId: { type: String },
     sessionId: { type: String, index: true },
+    cardName: { type: String },
+    actionName: { type: String },
     buildVersion: { type: String },
     releaseVersion: { type: String },
     payload: { type: mongoose.Schema.Types.Mixed },

@@ -25,6 +25,8 @@ const incidentSchema = new mongoose.Schema({
     apiRoute: { type: String },
     apiMethod: { type: String },
     toolModule: { type: String, default: 'General' },
+    cardName: { type: String },
+    actionName: { type: String },
     errorCode: { type: String },
     status: { 
         type: String, 
@@ -65,12 +67,14 @@ const incidentSchema = new mongoose.Schema({
         buildVersion: { type: String },
         releaseVersion: { type: String },
         logs: [{ type: String }],
-        breadcrumbs: [mongoose.Schema.Types.Mixed]
+        breadcrumbs: [mongoose.Schema.Types.Mixed],
+        cardName: { type: String },
+        actionName: { type: String }
     }
 }, { timestamps: true });
 
 // Index for signature/grouping checks
-incidentSchema.index({ errorMessage: 1, component: 1, apiRoute: 1, toolModule: 1, errorCode: 1 });
+incidentSchema.index({ errorMessage: 1, component: 1, apiRoute: 1, toolModule: 1, errorCode: 1, cardName: 1 });
 
 const Incident = mongoose.model('Incident', incidentSchema);
 export default Incident;

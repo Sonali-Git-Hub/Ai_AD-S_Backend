@@ -41,7 +41,7 @@ router.get('/gmail/callback', async (req, res) => {
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
 
     if (error) {
-        return res.redirect(`${frontendUrl}?connector_error=${encodeURIComponent(error)}`);
+        return res.redirect(`${frontendUrl}/dashboard/chat/new?connector_error=${encodeURIComponent(error)}`);
     }
 
     try {
@@ -91,11 +91,11 @@ router.get('/gmail/callback', async (req, res) => {
         }
 
         await user.save();
-        res.redirect(`${frontendUrl}?connector_success=true`);
+        res.redirect(`${frontendUrl}/dashboard/chat/new?connector_success=true`);
 
     } catch (err) {
         console.error("Gmail OAuth Callback Error:", err);
-        res.redirect(`${frontendUrl}?connector_error=true`); // Redirect back with error
+        res.redirect(`${frontendUrl}/dashboard/chat/new?connector_error=true`); // Redirect back with error
     }
 });
 

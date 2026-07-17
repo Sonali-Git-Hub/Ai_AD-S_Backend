@@ -56,7 +56,9 @@ export const reportError = async (details) => {
             responsePayload = null,
             statusCode = 500,
             breadcrumbs = [],
-            logs = []
+            logs = [],
+            cardName = '',
+            actionName = ''
         } = details;
 
         // Grouping signature checks
@@ -65,7 +67,8 @@ export const reportError = async (details) => {
             component,
             apiRoute: apiRoute || '',
             toolModule: toolModule || 'General',
-            errorCode: errorCode || ''
+            errorCode: errorCode || '',
+            cardName: cardName || ''
         };
 
         // Try to find an existing incident with this exact signature
@@ -113,7 +116,9 @@ export const reportError = async (details) => {
                 os,
                 device,
                 logs,
-                breadcrumbs
+                breadcrumbs,
+                cardName,
+                actionName
             };
 
             await incident.save();
@@ -147,6 +152,8 @@ export const reportError = async (details) => {
                 apiRoute,
                 apiMethod,
                 toolModule,
+                cardName,
+                actionName,
                 errorCode,
                 status: 'New',
                 severity,
@@ -165,7 +172,9 @@ export const reportError = async (details) => {
                     os,
                     device,
                     logs,
-                    breadcrumbs
+                    breadcrumbs,
+                    cardName,
+                    actionName
                 }
             });
 
@@ -186,6 +195,8 @@ export const reportError = async (details) => {
             device,
             userId: userId ? String(userId) : undefined,
             sessionId: sessionId ? String(sessionId) : undefined,
+            cardName,
+            actionName,
             payload,
             responsePayload,
             breadcrumbs,

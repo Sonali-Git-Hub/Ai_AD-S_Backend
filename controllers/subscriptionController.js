@@ -117,11 +117,8 @@ export const createOrder = async (req, res) => {
             if (!plan) return res.status(404).json({ success: false, message: 'Plan not found' });
             const basePrice = billingCycle === 'yearly' ? plan.priceYearly : plan.priceMonthly;
             
-            if (plan.isGstInclusive) {
-                amount = basePrice;
-            } else {
-                amount = Math.round(basePrice * 1.18 * 100) / 100;
-            }
+            // All subscription plans are now GST inclusive
+            amount = basePrice;
             
             console.log(`[createOrder] Plan: ${plan.planName} | Base: ${basePrice} | Is GST Inclusive: ${plan.isGstInclusive || false} | Calculated amount (with GST if excl): ${amount}`);
         } else {
@@ -182,11 +179,8 @@ export const purchasePlan = async (req, res) => {
                 const payment = await razorpay.payments.fetch(paymentId);
                 const basePrice = billingCycle === 'yearly' ? plan.priceYearly : plan.priceMonthly;
                 let expectedTotal;
-                if (plan.isGstInclusive) {
-                    expectedTotal = basePrice;
-                } else {
-                    expectedTotal = Math.round(basePrice * 1.18 * 100) / 100;
-                }
+                // All subscription plans are GST inclusive
+                expectedTotal = basePrice;
                 const expectedPaise = Math.round(expectedTotal * 100);
 
                 if (payment.status !== 'captured' && payment.status !== 'authorized') {

@@ -2,6 +2,7 @@ import Incident from '../models/Incident.js';
 import ErrorOccurrence from '../models/ErrorOccurrence.js';
 import ChatSession from '../models/ChatSession.js';
 import User from '../models/User.js';
+import mongoose from 'mongoose';
 import * as incidentService from '../services/incidentService.js';
 
 // Public report incident (frontend client reporting)
@@ -153,7 +154,31 @@ export const getIncidentDetails = async (req, res) => {
             .sort({ timestamp: -1 })
             .limit(30);
 
-        res.json({ success: true, incident, occurrences });
+        // Fetch user info for occurrences and incident
+        const occurrenceUserIds = occurrences.map(o => o.userId).filter(id => id && mongoose.Types.ObjectId.isValid(id));
+        const affectedUserIds = (incident.affectedUsers || []).filter(id => id && mongoose.Types.ObjectId.isValid(id));
+        const allUserIds = [...new Set([...occurrenceUserIds, ...affectedUserIds])];
+        
+        const users = await User.find({ _id: { $in: allUserIds } }).select('name email avatar');
+        const userMap = new Map(users.map(u => [u._id.toString(), u]));
+
+        const occurrencesWithUserInfo = occurrences.map(occ => {
+            const occObj = occ.toObject();
+            if (occ.userId && userMap.has(occ.userId.toString())) {
+                occObj.userInfo = userMap.get(occ.userId.toString());
+            } else {
+                occObj.userInfo = null;
+            }
+            return occObj;
+        });
+
+        const affectedUsersDetails = affectedUserIds.map(id => userMap.get(id.toString())).filter(Boolean);
+
+        // Add affectedUsersDetails to incident object response
+        const incidentObj = incident.toObject();
+        incidentObj.affectedUsersDetails = affectedUsersDetails;
+
+        res.json({ success: true, incident: incidentObj, occurrences: occurrencesWithUserInfo });
     } catch (error) {
         console.error('[getIncidentDetails Error]', error);
         res.status(500).json({ success: false, message: 'Failed to fetch incident details' });
