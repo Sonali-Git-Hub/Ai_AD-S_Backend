@@ -24,7 +24,7 @@ import { executeImagePipeline, executeVideoPipeline } from "../services/generati
 import { selectVideoModel } from "../services/modelSelector.js";
 import { getMemoryContext, extractUserMemory, updateMemory } from "../utils/memoryService.js";
 import { subscriptionService, checkPremiumAccess, checkQuota, incrementQuota } from '../services/subscriptionService.js';
-import { retrieveContextFromRag, detectRAGNeed } from "../services/vertex.service.js";
+import { retrieveContextFromRag, detectRAGNeed, AskVertexRaw } from "../services/vertex.service.js";
 import * as configService from "../services/configService.js";
 import Knowledge from "../models/Knowledge.model.js";
 import * as webSearchService from "../services/webSearch.service.js";
@@ -1046,6 +1046,70 @@ router.post('/upload-pdf', upload.single('pdf'), async (req, res) => {
   } catch (err) {
     console.error('[PDF UPLOAD ERROR]', err);
     return res.status(500).json({ error: 'PDF upload failed' });
+  }
+});
+
+// --- AI ADS ASSISTANT RAG CHAT ---
+router.post('/ai-ads-assistant', async (req, res) => {
+  try {
+    const { query } = req.body;
+    if (!query) {
+      return res.status(400).json({ success: false, error: 'Query is required' });
+    }
+
+    // 1. Retrieve context from RAG strictly matching category 'AIADASSET'
+    const ragContext = await retrieveContextFromRag(query, 8, 'AIADASSET');
+    
+    // If no context was retrieved (e.g. no documents uploaded yet), return a helpful warning message
+    if (!ragContext || !ragContext.text || ragContext.text.trim().length === 0) {
+      return res.json({
+        success: true,
+        text: "I couldn't find any information in the uploaded AI Ads documents regarding this query. Please upload reference documents in the Admin panel under the 'Ai AD's' target category to enable RAG support!"
+      });
+    }
+
+    // 2. Generate response using AskVertexRaw — correctly handles both Vertex AI and Gemini API SDK formats
+    const prompt = `You are the Elite AI Ads™ Advertising & Marketing Advisor and Social Media Expert.
+Your purpose is to provide professional, executive-level marketing, campaign, and social media guidance to users.
+
+### CORE INSTRUCTIONS:
+1. **Persona**: Write as a senior social media director and creative marketing advisor. Use a strategic, professional, encouraging, and authoritative tone. Use formatted sections, bullet points, and clear headings where appropriate.
+2. **Project Feature Inquiries (AISA / AI Ads)**: When the user asks about AISA's features, capabilities, pricing, workflows, or target categories, rely on the **RAG Context** below as the absolute source of truth.
+3. **Marketing & Advisory Inquiries**: When the user asks for campaign strategies, post ideas, growth advice, copy optimization, targeting, or general marketing solutions, blend your advanced general marketing expertise with the RAG Context to provide high-value, actionable solutions.
+4. **Bridging**: Always suggest how the user can leverage AISA's AI Ads features (like the Content Calendar, Brand DNA Workspace, and automatic multi-platform scheduling) to solve their real-world marketing challenges.
+
+RAG Context:
+${ragContext.text}
+
+User Query: ${query}
+
+Expert Advisor Answer:`;
+
+    // ✅ AskVertexRaw correctly handles both @google-cloud/vertexai and @google/generative-ai response formats
+    let botText = '';
+    try {
+      botText = await AskVertexRaw(prompt, {
+        maxOutputTokens: 2048,
+        temperature: 0.3,
+        modelOverride: 'gemini-2.5-flash'
+      });
+    } catch (genErr) {
+      console.error('[AI-ADS-CHAT] LLM generation error:', genErr.message);
+      botText = '';
+    }
+
+    if (!botText || botText.trim().length === 0) {
+      botText = "I was able to retrieve context from your uploaded documents but couldn't generate a response. Please try again in a moment.";
+    }
+
+    return res.json({
+      success: true,
+      text: botText,
+      sources: ragContext.sources
+    });
+  } catch (err) {
+    console.error('[AI-ADS-CHAT-ERROR]', err);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 

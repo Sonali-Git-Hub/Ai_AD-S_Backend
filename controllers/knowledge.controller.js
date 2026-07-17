@@ -57,27 +57,45 @@ export const uploadDocument = async (req, res) => {
         const originalName = req.file.originalname;
         const fileBuffer = req.file.buffer;
         const mimeType = req.file.mimetype;
-        let category = req.body.category || 'General';
         const assetType = req.body.assetType;
         const fileSize = req.file.size;
+
+        // ✅ FIX 1: Normalize category FIRST before any routing decisions
+        let category = (req.body.category || 'GENERAL').toUpperCase();
+        if (!['LEGAL', 'GENERAL', 'AIADASSET', 'FINANCE'].includes(category)) {
+            category = 'GENERAL';
+        }
 
         logger.info(`Received file for GCS upload: ${originalName} (${fileSize} bytes) - Category: ${category}`);
 
         // 1. Upload to Google Cloud Storage
         let gcsUri = null;
         try {
+            // ✅ FIX 2: AIADASSET always goes to aisa_knowledge_base so Vertex RAG can find it.
+            // Only the OLD 'AiAdAsset' (social media asset flow) uses the separate bucket.
             let bucketName = 'aisa_knowledge_base';
-            let folderPath = '';
+            let folderPath = 'AIADASSET/'; // default subfolder for AI Ads RAG docs
 
-            // Map AI Ad Agent specific folders
-            if (category === 'AiAdAsset') {
+            if (category === 'LEGAL') {
+                folderPath = 'LEGAL/';
+            } else if (category === 'FINANCE') {
+                folderPath = 'FINANCE/';
+            } else if (category === 'GENERAL') {
+                folderPath = 'GENERAL/';
+            } else if (category === 'AIADASSET') {
+                folderPath = 'AIADASSET/';
+            }
+
+            // Legacy AiAdAsset flow (Brand Logo / Content Calendar assets - NOT for RAG)
+            if (req.body.category === 'AiAdAsset') {
                 bucketName = 'social_media_agent_assets';
+                folderPath = '';
                 if (assetType === 'logo') folderPath = 'Brand Logo/';
                 else if (assetType === 'company') folderPath = 'Company overview Document/';
                 else if (assetType === 'calendar') folderPath = 'Content calender/';
             }
 
-            logger.info(`Uploading to Google Cloud Storage bucket: ${bucketName}${folderPath ? `, folder: ${folderPath}` : ''}`);
+            logger.info(`Uploading to GCS bucket: ${bucketName}/${folderPath} (Category: ${category})`);
             
             const storageOptions = process.env.GCP_PROJECT_ID ? { projectId: process.env.GCP_PROJECT_ID } : {};
             const storageClient = new Storage(storageOptions);
@@ -94,24 +112,16 @@ export const uploadDocument = async (req, res) => {
             logger.info(`GCS Upload Success: ${gcsUri}`);
         } catch (gcsError) {
             logger.error(`GCS Upload Failed: ${gcsError.message}`);
-            // Throw the actual error so the frontend stops and reports it
             throw new Error(`Google Cloud Storage Error: ${gcsError.message}`);
         }
 
-        // 2. Dispatch Vertex AI RAG Engine Import (Run asynchronously)
-        if (gcsUri && category !== 'AiAdAsset') {
+        // ✅ FIX 3: Import ALL RAG categories (LEGAL, GENERAL, FINANCE, AIADASSET) to Vertex RAG.
+        // Only skip the legacy AiAdAsset social-media assets (logos, calendars) which are not RAG docs.
+        if (gcsUri && req.body.category !== 'AiAdAsset') {
+            logger.info(`[Vertex RAG] Queuing import for: ${originalName} (Category: ${category})`);
             vertexService.importToVertexRag(gcsUri, originalName).catch(err => {
                 logger.error(`Background Vertex RAG error for ${originalName}: ${err.message}`);
             });
-        }
-
-        // 3. Category Normalization (Adopting new defaults while preserving specialized agents)
-        category = req.body.category || 'GENERAL';
-        category = category.toUpperCase();
-        
-        // If it's not a specialized agent category, enforce the platform standard
-        if (!['LEGAL', 'GENERAL', 'AIADASSET', 'FINANCE'].includes(category)) {
-            category = 'GENERAL';
         }
 
         // 3. Always Store Metadata (for listing)
@@ -349,7 +359,7 @@ export const uploadUrl = async (req, res) => {
         let { url, category = 'LEGAL', depth = 2, maxPages = 20, frequency = 'daily' } = req.body;
         
         category = category.toUpperCase();
-        if (!['LEGAL', 'GENERAL', 'FINANCE'].includes(category)) category = 'GENERAL';
+        if (!['LEGAL', 'GENERAL', 'FINANCE', 'AIADASSET'].includes(category)) category = 'GENERAL';
 
         if (!url) {
             return res.status(400).json({ success: false, message: 'URL is required' });

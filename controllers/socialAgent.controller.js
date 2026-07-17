@@ -169,7 +169,6 @@ export const getAllWorkspaces = async (req, res) => {
       }
     ]);
     console.log(`[getAllWorkspaces] Returning ${workspaces.length} workspaces.`);
-    workspaces.forEach(w => console.log(`Workspace ${w._id}: brandProfile=${w.brandProfile ? JSON.stringify(w.brandProfile) : 'MISSING'}`));
     res.json({ success: true, workspaces });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
