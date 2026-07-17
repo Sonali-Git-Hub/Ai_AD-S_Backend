@@ -349,7 +349,7 @@ export const uploadUrl = async (req, res) => {
         let { url, category = 'LEGAL', depth = 2, maxPages = 20, frequency = 'daily' } = req.body;
         
         category = category.toUpperCase();
-        if (!['LEGAL', 'GENERAL', 'FINANCE'].includes(category)) category = 'GENERAL';
+        if (!['LEGAL', 'GENERAL', 'FINANCE', 'AIADASSET'].includes(category)) category = 'GENERAL';
 
         if (!url) {
             return res.status(400).json({ success: false, message: 'URL is required' });

@@ -1049,4 +1049,55 @@ router.post('/upload-pdf', upload.single('pdf'), async (req, res) => {
   }
 });
 
+// --- AI ADS ASSISTANT RAG CHAT ---
+router.post('/ai-ads-assistant', async (req, res) => {
+  try {
+    const { query } = req.body;
+    if (!query) {
+      return res.status(400).json({ success: false, error: 'Query is required' });
+    }
+
+    // 1. Retrieve context from RAG strictly matching category 'AIADASSET'
+    const ragContext = await retrieveContextFromRag(query, 8, 'AIADASSET');
+    
+    // If no context was retrieved (e.g. no documents uploaded yet), return a helpful warning message
+    if (!ragContext || !ragContext.text || ragContext.text.trim().length === 0) {
+      return res.json({
+        success: true,
+        text: "I couldn't find any information in the uploaded AI Ads documents regarding this query. Please upload reference documents in the Admin panel under the 'Ai AD's' target category to enable RAG support!"
+      });
+    }
+
+    // 2. Generate response using Gemini strictly based on the retrieved context
+    const prompt = `You are the AI Ads™ Social Media Assistant.
+You must answer the user query based ONLY on the provided RAG context below. Do not make up any information outside of the context. If the context does not contain enough information to answer, state clearly that the uploaded documents do not contain that information.
+
+RAG Context:
+${ragContext.text}
+
+User Query:
+${query}
+
+Answer:`;
+
+    const result = await generativeModel.generateContent(prompt);
+    let botText = result.response?.text || result.text || '';
+    if (typeof botText === 'function') {
+      botText = await botText();
+    }
+    if (!botText) {
+      botText = "I encountered an error generating a response from the uploaded documents.";
+    }
+
+    return res.json({
+      success: true,
+      text: botText,
+      sources: ragContext.sources
+    });
+  } catch (err) {
+    console.error('[AI-ADS-CHAT-ERROR]', err);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
 export default router;

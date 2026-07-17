@@ -123,13 +123,16 @@ export const retrieveContextFromRag = async (query, topK = 8, category = 'LEGAL'
 
         const corpusName = `projects/${projectId}/locations/${location}/ragCorpora/${corpusId}`;
 
+        // Retrieve up to 100 chunks if specialized category filtering is enabled to avoid category starvation
+        const retrievalTopK = (category && category !== 'GENERAL') ? 100 : topK;
+
         const payload = {
             vertexRagStore: {
                 ragCorpora: [corpusName]
             },
             query: {
                 text: query,
-                similarityTopK: topK
+                similarityTopK: retrievalTopK
             }
         };
 
@@ -158,13 +161,51 @@ export const retrieveContextFromRag = async (query, topK = 8, category = 'LEGAL'
 
         for (const context of validContexts) {
             const gcsUri = context.sourceUri;
-            // Even if gcsUri is missing, still use the chunk text if present
-            const doc = gcsUri ? await Knowledge.findOne({ gcsUri }) : null;
+            let doc = null;
+            if (gcsUri) {
+                // Normalize GCS URIs to support both gs:// and https:// formats
+                let normalizedGcs = gcsUri;
+                let normalizedHttp = gcsUri;
+                if (gcsUri.startsWith('gs://')) {
+                    const pathParts = gcsUri.replace('gs://', '').split('/');
+                    const bucket = pathParts[0];
+                    const filepath = pathParts.slice(1).join('/');
+                    normalizedHttp = `https://storage.googleapis.com/${bucket}/${filepath}`;
+                } else if (gcsUri.startsWith('https://storage.googleapis.com/')) {
+                    const pathParts = gcsUri.replace('https://storage.googleapis.com/', '').split('/');
+                    const bucket = pathParts[0];
+                    const filepath = pathParts.slice(1).join('/');
+                    normalizedGcs = `gs://${bucket}/${filepath}`;
+                }
+
+                doc = await Knowledge.findOne({
+                    $or: [
+                        { gcsUri: normalizedGcs },
+                        { gcsUri: normalizedHttp }
+                    ]
+                });
+
+                // Fallback: search by filename matching
+                if (!doc) {
+                    const filenameFromUri = decodeURIComponent(gcsUri.split('/').pop());
+                    const cleanFilename = filenameFromUri.replace(/^\d+-/, ''); // strip leading timestamp
+                    doc = await Knowledge.findOne({
+                        $or: [
+                            { filename: cleanFilename },
+                            { filename: filenameFromUri }
+                        ]
+                    });
+                }
+            }
 
             console.log(`[RAG DEBUG] Chunk Source: ${gcsUri || 'N/A'} | DB Doc: ${doc ? 'FOUND' : 'NOT_IN_DB'} | DB Category: ${doc?.category || 'NONE'} | Requested: ${category}`);
 
-            // If doc not found in DB but we still have text, use it (don't skip)
-            // If doc is found, optionally filter by category (currently relaxed)
+            // Enforce strict category checks to prevent database context cross-pollution
+            if (!doc || doc.category !== category) {
+                console.log(`[RAG DEBUG] Skipping chunk: category ${doc ? doc.category : 'N/A'} does not match requested ${category}`);
+                continue;
+            }
+
             if (!context.text || context.text.trim().length === 0) continue;
 
             // Build source info from doc if found, otherwise use sensible defaults
@@ -220,7 +261,8 @@ export const retrieveContextFromRag = async (query, topK = 8, category = 'LEGAL'
         }
 
         const template = configService.getConfig('RAG_CONTEXT_TEMPLATE', 'Use this context: {retrieved_text}');
-        const ragContext = template.replace('{retrieved_text}', retrievedTexts.join('\n\n'));
+        const slicedTexts = retrievedTexts.slice(0, topK);
+        const ragContext = template.replace('{retrieved_text}', slicedTexts.join('\n\n'));
 
         logger.info(`[Vertex RAG] Chunks: ${validContexts.length} | Unique Sources: ${uniqueSources.length}`);
         // Return max 3 sources to keep the UI clean as requested by the user
