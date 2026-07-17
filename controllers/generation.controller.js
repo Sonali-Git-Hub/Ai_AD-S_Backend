@@ -557,6 +557,10 @@ export const generateVisualPost = async (req, res) => {
 };
 
 export const generateManualPost = async (req, res) => {
+  // Extend the socket timeout for this long-running request (image gen can take 3-5 min)
+  req.socket?.setTimeout(600000);
+  res.setTimeout(600000);
+  
   try {
     const {
       workspaceId,

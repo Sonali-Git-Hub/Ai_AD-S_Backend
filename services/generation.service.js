@@ -562,10 +562,25 @@ const applyVisualOverlays = async (imageUrl, logoUrl, headingText, subheadingTex
   const overlayStart = Date.now();
 
   try {
-    // 1. Download the generated image as base64
-    //    Use a longer timeout (45 s) — full-res Gemini images can be several MB.
-    const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer', timeout: 45000 });
-    const imageData = imageResponse.data;
+    let rawImageUrl = imageUrl;
+    if (rawImageUrl.includes('/api/media/proxy?url=')) {
+      rawImageUrl = decodeURIComponent(rawImageUrl.split('url=')[1]);
+    }
+
+    let imageData, imageMime;
+    const isGcsUrl = rawImageUrl.startsWith('gs://') || rawImageUrl.includes('storage.googleapis.com');
+    
+    if (isGcsUrl) {
+      console.log(`    [VisualOverlay] 📥 Downloading base image via GCS SDK...`);
+      const gcsResult = await downloadFromGCS(rawImageUrl);
+      imageData = gcsResult.buffer;
+      imageMime = gcsResult.contentType.split(';')[0].trim().toLowerCase();
+    } else {
+      console.log(`    [VisualOverlay] 📥 Downloading base image via HTTP...`);
+      const imageResponse = await axios.get(rawImageUrl, { responseType: 'arraybuffer', timeout: 45000 });
+      imageData = imageResponse.data;
+      imageMime = toImageMime(imageResponse.headers['content-type']);
+    }
 
     if (!imageData || imageData.byteLength < 100) {
       console.warn(`    [VisualOverlay] ⚠️  Downloaded image is empty/too small (${imageData?.byteLength ?? 0} bytes) — skipping overlay.`);
@@ -573,8 +588,6 @@ const applyVisualOverlays = async (imageUrl, logoUrl, headingText, subheadingTex
     }
 
     const imageBase64 = Buffer.from(imageData).toString('base64');
-    // Force a valid image MIME — GCS signed URLs often return application/octet-stream
-    const imageMime = toImageMime(imageResponse.headers['content-type']);
     console.log(`    [VisualOverlay] 📦 Image downloaded: ${imageData.byteLength} bytes | MIME: ${imageMime}`);
 
     // 2. Download the brand logo as base64 (if available)
@@ -1331,6 +1344,7 @@ export const generateManualPost = async (workspaceId, payload) => {
        - Generate Caption: ${enhancements?.generateCaption !== false ? 'YES' : 'NO'} (If NO, leave captionShort and captionLong blank)
        - Generate Hashtags: ${enhancements?.generateHashtags !== false ? 'YES' : 'NO'} (If NO, return empty hashtags array)
        - Generate CTA: ${enhancements?.generateCTA !== false ? 'YES' : 'NO'} (If NO, leave cta blank)
+       - Generate Hook: ${enhancements?.generateHook !== false ? 'YES' : 'NO'} (If NO, leave hook blank)
        - Generate Emoji Suggestions: ${enhancements?.generateEmojiSuggestions !== false ? 'YES' : 'NO'} (If NO, do not include emojis in copy)
        - Generate SEO Keywords: ${enhancements?.generateSEOKeywords !== false ? 'YES' : 'NO'} (If NO, return empty seoKeywords array)
        - Generate Image Prompt: ${enhancements?.generateImagePrompt !== false ? 'YES' : 'NO'} (If NO, return empty imagePrompt)
@@ -1359,7 +1373,7 @@ export const generateManualPost = async (workspaceId, payload) => {
 
   // Map length / type to model type
   let type = 'image';
-  if (contentLength === 'Carousel' || contentLength === 'Thread') {
+  if ((contentType && contentType.toLowerCase().includes('carousel')) || contentLength === 'Carousel' || contentLength === 'Thread') {
     type = 'carousel';
   }
 
@@ -1429,25 +1443,19 @@ export const generateManualPost = async (workspaceId, payload) => {
       }
     }
 
+    // Use the base image directly — skip the secondary overlay step
+    // (overlay adds another 60-120s AI call that causes connection timeouts)
     finalImageUrl = baseImageUrl || logoUrl || "https://storage.googleapis.com/social_media_agent_assets/mock/ai_post.png";
-    if (baseImageUrl) {
-      try {
-        console.log(`[ManualGen] Compositing overlays on base image with logo: ${logoUrl ? 'Yes' : 'No'}`);
-        finalImageUrl = await applyVisualOverlays(baseImageUrl, logoUrl, post.hook, post.captionShort || post.captionLong?.substring(0, 50), '1:1');
-      } catch (err) {
-        console.error(`[ManualGen] Visual overlays composition failed: ${err.message}`);
-        finalImageUrl = baseImageUrl;
-      }
-    }
 
     const asset = await GeneratedAsset.create({
       postId: post._id,
       workspaceId,
-      assetType: 'image',
+      assetType: type,
       assetSource: 'generated',
       gcsUrl: finalImageUrl,
       mimeType: 'image/png',
       fileSize: 0,
+      metadata: type === 'carousel' ? { slides: [{ imageUrl: finalImageUrl }, { imageUrl: finalImageUrl }] } : {},
       dateString: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     });
 
