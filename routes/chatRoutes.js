@@ -1060,12 +1060,9 @@ router.post('/ai-ads-assistant', async (req, res) => {
     // 1. Retrieve context from RAG strictly matching category 'AIADASSET'
     const ragContext = await retrieveContextFromRag(query, 8, 'AIADASSET');
     
-    // If no context was retrieved (e.g. no documents uploaded yet), return a helpful warning message
-    if (!ragContext || !ragContext.text || ragContext.text.trim().length === 0) {
-      return res.json({
-        success: true,
-        text: "I couldn't find any information in the uploaded AI Ads documents regarding this query. Please upload reference documents in the Admin panel under the 'Ai AD's' target category to enable RAG support!"
-      });
+    let contextText = "No additional RAG context available for this query.";
+    if (ragContext && ragContext.text && ragContext.text.trim().length > 0) {
+      contextText = ragContext.text;
     }
 
     // 2. Generate response using AskVertexRaw — correctly handles both Vertex AI and Gemini API SDK formats
@@ -1079,7 +1076,7 @@ Your purpose is to provide professional, executive-level marketing, campaign, an
 4. **Bridging**: Always suggest how the user can leverage AISA's AI Ads features (like the Content Calendar, Brand DNA Workspace, and automatic multi-platform scheduling) to solve their real-world marketing challenges.
 
 RAG Context:
-${ragContext.text}
+${contextText}
 
 User Query: ${query}
 
@@ -1099,13 +1096,13 @@ Expert Advisor Answer:`;
     }
 
     if (!botText || botText.trim().length === 0) {
-      botText = "I was able to retrieve context from your uploaded documents but couldn't generate a response. Please try again in a moment.";
+      botText = "I couldn't generate a response at this moment. Please try again.";
     }
 
     return res.json({
       success: true,
       text: botText,
-      sources: ragContext.sources
+      sources: ragContext?.sources || []
     });
   } catch (err) {
     console.error('[AI-ADS-CHAT-ERROR]', err);
