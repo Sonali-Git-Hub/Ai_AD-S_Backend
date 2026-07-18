@@ -334,9 +334,8 @@ CRITICAL REQUIREMENTS:
 `;
 
       try {
-        const aiRes = await aiService.chat(promptText, null, { systemInstruction });
-        let responseText = aiRes?.text || '[]';
-        responseText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
+        let responseText = await vertexService.AskVertexRaw(promptText, { systemInstruction });
+        responseText = (responseText || '[]').replace(/```json/gi, '').replace(/```/g, '').trim();
         const batchResults = JSON.parse(responseText);
 
         if (Array.isArray(batchResults)) {
@@ -504,11 +503,9 @@ Brand DNA info:
 Based strictly on the strategic AI Caption Prompt ("${post.captionPrompt}"), write the actual social media copy. The caption must closely match the specified hook, story angle, CTA, emojis, and hashtags style from the prompt.
 Generate the actual caption, hashtags, cta, expected engagement, expected reach, aiScore, and bestPostingTime. Return ONLY the strict JSON object.`;
 
-  const aiRes = await aiService.chat(promptText, null, { systemInstruction });
-  let responseText = aiRes?.text || '';
-
+  let responseText = await vertexService.AskVertexRaw(promptText, { systemInstruction });
   // Clean markdown json prefix/suffix if present
-  responseText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+  responseText = (responseText || '').replace(/```json/g, '').replace(/```/g, '').trim();
 
   let data;
   try {
@@ -838,11 +835,10 @@ Return ONLY this exact JSON array format (no extra text):
   { "title": "...", "desc": "...", "impact": "Medium", "type": "..." }
 ]`;
 
-    const aiRes = await aiService.chat(promptText, null, { systemInstruction });
-    let responseText = aiRes?.text || '[]';
+    let responseText = await vertexService.AskVertexRaw(promptText, { systemInstruction });
 
     // Strip markdown code fences if present
-    responseText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
+    responseText = (responseText || '[]').replace(/```json/gi, '').replace(/```/g, '').trim();
 
     let recommendations;
     try {
