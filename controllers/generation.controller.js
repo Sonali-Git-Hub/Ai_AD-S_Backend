@@ -275,9 +275,16 @@ export const getAssets = async (req, res) => {
       if (asset.assetType === 'carousel' && Array.isArray(asset.metadata?.slides) && asset.metadata.slides.length > 0) {
         try {
           const signedSlides = await Promise.all(
-            asset.metadata.slides.map(slideUrl =>
-              socialAgentService.generateSignedUrl(slideUrl).catch(() => slideUrl)
-            )
+            asset.metadata.slides.map(async (slide) => {
+              // Support both old format (string URL) and new format (object with .url)
+              if (typeof slide === 'string') {
+                return socialAgentService.generateSignedUrl(slide).catch(() => slide);
+              } else if (slide && typeof slide === 'object' && slide.url) {
+                const signedUrl = await socialAgentService.generateSignedUrl(slide.url).catch(() => slide.url);
+                return { ...slide, url: signedUrl };
+              }
+              return slide;
+            })
           );
           asset.metadata = { ...asset.metadata, slides: signedSlides };
         } catch (e) {
