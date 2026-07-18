@@ -14,27 +14,32 @@ export const calculatePublishingDates = (startDate, endDate, frequency) => {
   const start = new Date(startDate);
   const end = new Date(endDate);
 
+  console.log(`[calculatePublishingDates] Input - Start: ${startDate}, End: ${endDate}, Freq: "${frequency}"`);
+
   if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) {
+    console.warn(`[calculatePublishingDates] ⚠️ Invalid date range!`);
     return [];
   }
 
   const diffTime = Math.abs(end - start);
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+  console.log(`[calculatePublishingDates] Date Span diffDays: ${diffDays}`);
 
   const dates = [];
+  const normalizedFreq = (frequency || '').trim().toLowerCase();
 
-  if (frequency === 'Daily') {
+  if (normalizedFreq === 'daily') {
     for (let i = 0; i < diffDays; i++) {
       const d = new Date(start);
       d.setDate(start.getDate() + i);
       dates.push(d);
     }
-  } else if (frequency.endsWith('Per Week') || frequency === 'Weekly') {
+  } else if (normalizedFreq.endsWith('per week') || normalizedFreq === 'weekly' || normalizedFreq.startsWith('2x') || normalizedFreq.startsWith('3x')) {
     let countPerWeek = 1;
-    if (frequency === '2x Per Week') countPerWeek = 2;
-    else if (frequency === '3x Per Week') countPerWeek = 3;
-    else if (frequency === '4x Per Week') countPerWeek = 4;
-    else if (frequency === '5x Per Week') countPerWeek = 5;
+    if (normalizedFreq.startsWith('2x')) countPerWeek = 2;
+    else if (normalizedFreq.startsWith('3x')) countPerWeek = 3;
+    else if (normalizedFreq.startsWith('4x')) countPerWeek = 4;
+    else if (normalizedFreq.startsWith('5x')) countPerWeek = 5;
 
     let currentWeekStart = new Date(start);
     while (currentWeekStart <= end) {
@@ -56,17 +61,25 @@ export const calculatePublishingDates = (startDate, endDate, frequency) => {
 
       currentWeekStart.setDate(currentWeekStart.getDate() + 7);
     }
-  } else if (frequency === 'Bi Weekly') {
+  } else if (normalizedFreq === 'bi weekly' || normalizedFreq === 'biweekly') {
     let current = new Date(start);
     while (current <= end) {
       dates.push(new Date(current));
       current.setDate(current.getDate() + 14);
     }
-  } else if (frequency === 'Monthly') {
+  } else if (normalizedFreq === 'monthly') {
     let current = new Date(start);
     while (current <= end) {
       dates.push(new Date(current));
       current.setMonth(current.getMonth() + 1);
+    }
+  } else {
+    // Default fallback: daily
+    console.warn(`[calculatePublishingDates] Unknown frequency "${frequency}". Falling back to Daily.`);
+    for (let i = 0; i < diffDays; i++) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      dates.push(d);
     }
   }
 
@@ -81,7 +94,9 @@ export const calculatePublishingDates = (startDate, endDate, frequency) => {
     }
   }
 
-  return uniqueDates.sort((a, b) => a.getTime() - b.getTime());
+  const sortedDates = uniqueDates.sort((a, b) => a.getTime() - b.getTime());
+  console.log(`[calculatePublishingDates] Generated ${sortedDates.length} dates:`, sortedDates.map(d => d.toISOString().split('T')[0]));
+  return sortedDates;
 };
 
 /**
@@ -116,6 +131,13 @@ export const generateDates = async (req, res) => {
 export const createCampaign = async (req, res) => {
   try {
     const { workspaceId, campaignName, campaignGoal, campaignMonth, startDate, endDate, postingFrequency, platforms } = req.body;
+
+    try {
+      const fs = await import('fs');
+      fs.appendFileSync('./campaign_creation.log', `[${new Date().toISOString()}] Incoming request: name="${campaignName}", start="${startDate}", end="${endDate}", freq="${postingFrequency}"\n`);
+    } catch (e) {
+      console.error("Log write failed:", e);
+    }
 
     // Validations
     if (!workspaceId) return res.status(400).json({ success: false, error: 'workspaceId required' });
@@ -171,6 +193,13 @@ export const createCampaign = async (req, res) => {
 
     // 3. Calculate publishing dates
     const calculatedDates = calculatePublishingDates(startDate, endDate, postingFrequency);
+
+    try {
+      const fs = await import('fs');
+      fs.appendFileSync('./campaign_creation.log', `[${new Date().toISOString()}] Calculated dates count: ${calculatedDates.length}, dates: ${JSON.stringify(calculatedDates.map(d => d.toISOString().split('T')[0]))}\n`);
+    } catch (e) {
+      console.error("Log write failed:", e);
+    }
 
     // Only Image and Carousel are supported content types now
     const contentTypes = ['Image', 'Carousel'];
