@@ -162,13 +162,18 @@ const TARGET_SA = process.env.VIDEO_SERVICE_ACCOUNT || 'video-signer@ai-mall-484
  * which works with user ADC without needing a local client_email key file.
  */
 export const generateSignedUrl = async (gcsUrl) => {
-  if (!gcsUrl || !gcsUrl.includes('storage.googleapis.com')) return gcsUrl;
+  if (!gcsUrl || typeof gcsUrl !== 'string' || !gcsUrl.includes('storage.googleapis.com/')) return gcsUrl;
 
   // Strip existing query params (e.g. previous signed URL tokens)
   const urlWithoutQuery = gcsUrl.split('?')[0];
-  const rawParts = urlWithoutQuery.split('storage.googleapis.com/')[1];
-  const bucketInUrl = rawParts.split('/')[0];
-  const fileName = rawParts.split('/').slice(1).join('/');
+  const parts = urlWithoutQuery.split('storage.googleapis.com/');
+  if (parts.length < 2) return gcsUrl;
+  const rawParts = parts[1];
+  if (!rawParts) return gcsUrl;
+  const rawSplit = rawParts.split('/');
+  if (rawSplit.length === 0) return gcsUrl;
+  const bucketInUrl = rawSplit[0];
+  const fileName = rawSplit.slice(1).join('/');
 
   const expires = Date.now() + 15 * 60 * 1000; // 15 minutes
 

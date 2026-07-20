@@ -334,7 +334,7 @@ CRITICAL REQUIREMENTS:
 `;
 
       try {
-        let responseText = await vertexService.AskVertexRaw(promptText, { systemInstruction });
+        let responseText = await vertexService.AskVertexRaw(promptText, { systemInstruction, isJson: true });
         responseText = (responseText || '[]').replace(/```json/gi, '').replace(/```/g, '').trim();
         const batchResults = JSON.parse(responseText);
 
@@ -344,7 +344,7 @@ CRITICAL REQUIREMENTS:
           throw new Error('Response is not an array');
         }
       } catch (err) {
-        console.error(`Prompt generation failed for batch starting at ${i}, using fallback`, err);
+        console.error(`Prompt generation failed for batch starting at ${i}, using fallback. ERROR STACK: ${err.stack || err}`);
         // Fallback prompts
         batch.forEach((p, idx) => {
           allGeneratedPrompts.push({
@@ -390,6 +390,7 @@ CRITICAL REQUIREMENTS:
 
     return res.status(201).json({ success: true, campaign, posts: createdPosts });
   } catch (error) {
+    console.error("CAMPAIGN CREATION ERROR STACK:", error.stack || error);
     return res.status(500).json({ success: false, error: error.message });
   }
 };
@@ -503,7 +504,7 @@ Brand DNA info:
 Based strictly on the strategic AI Caption Prompt ("${post.captionPrompt}"), write the actual social media copy. The caption must closely match the specified hook, story angle, CTA, emojis, and hashtags style from the prompt.
 Generate the actual caption, hashtags, cta, expected engagement, expected reach, aiScore, and bestPostingTime. Return ONLY the strict JSON object.`;
 
-  let responseText = await vertexService.AskVertexRaw(promptText, { systemInstruction });
+  let responseText = await vertexService.AskVertexRaw(promptText, { systemInstruction, isJson: true });
   // Clean markdown json prefix/suffix if present
   responseText = (responseText || '').replace(/```json/g, '').replace(/```/g, '').trim();
 
@@ -835,7 +836,7 @@ Return ONLY this exact JSON array format (no extra text):
   { "title": "...", "desc": "...", "impact": "Medium", "type": "..." }
 ]`;
 
-    let responseText = await vertexService.AskVertexRaw(promptText, { systemInstruction });
+    let responseText = await vertexService.AskVertexRaw(promptText, { systemInstruction, isJson: true });
 
     // Strip markdown code fences if present
     responseText = (responseText || '[]').replace(/```json/gi, '').replace(/```/g, '').trim();

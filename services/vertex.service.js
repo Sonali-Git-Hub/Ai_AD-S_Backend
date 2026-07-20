@@ -419,7 +419,7 @@ export const AskVertexRaw = async (prompt, options = {}) => {
         logger.info(`[AskVertexRaw] Mapping: ${rawModelName} -> ${selectedModelName}`);
 
         if (useVertexAI && vertexAI) {
-            // Use Vertex AI with fresh model (no system instruction for raw calls)
+            // Use Vertex AI with fresh model
             const { HarmCategory, HarmBlockThreshold } = await import('@google-cloud/vertexai');
             model = vertexAI.getGenerativeModel({
                 model: selectedModelName,
@@ -431,7 +431,8 @@ export const AskVertexRaw = async (prompt, options = {}) => {
                     temperature: options.temperature || 0.7,
                     ...(options.isJson && { responseMimeType: "application/json" })
                 },
-                tools: options.useSearch ? [{ googleSearch: {} }] : []
+                tools: options.useSearch ? [{ googleSearch: {} }] : [],
+                ...(options.systemInstruction && { systemInstruction: options.systemInstruction })
             });
         } else if (genAIInstance) {
             // Use Gemini API (API key mode)
@@ -442,7 +443,8 @@ export const AskVertexRaw = async (prompt, options = {}) => {
                     temperature: options.temperature || 0.7,
                     ...(options.isJson && { responseMimeType: "application/json" })
                 },
-                tools: options.useSearch ? [{ googleSearch: {} }] : []
+                tools: options.useSearch ? [{ googleSearch: {} }] : [],
+                ...(options.systemInstruction && { systemInstruction: options.systemInstruction })
             });
         } else {
             throw new Error('AI model instance not available');

@@ -1256,9 +1256,8 @@ const getImageBase64 = async (url) => {
   }
 };
 
-export const generateManualPost = async (workspaceId, payload) => {
+const generateSinglePlatformPost = async (workspaceId, singlePlatform, payload, brand, imageContextBlock) => {
   const {
-    platform,
     contentType,
     targetAudience,
     tone,
@@ -1271,8 +1270,6 @@ export const generateManualPost = async (workspaceId, payload) => {
     userId
   } = payload;
 
-  const brand = await BrandProfile.findOne({ workspaceId });
-  
   // 1. Fallback to Brand Profile if user didn't specify in the wizard
   const finalTone = (tone && tone.length > 0) ? tone : brand?.toneOfVoice;
   const toneStr = Array.isArray(finalTone) ? finalTone.join(', ') : (finalTone || 'Professional');
@@ -1283,37 +1280,9 @@ export const generateManualPost = async (workspaceId, payload) => {
   const brandDesc = brand ? (brand.extractedBrandSummary || brand.companyOverviewText || '') : '';
   const brandContext = brand ? `Name: ${brand.companyName || 'Brand'}, Industry: ${brand.targetIndustry || 'General'}, Description: ${brandDesc}` : 'No brand profile set';
 
-  // --- IMAGE CONTEXT ENRICHMENT ---
-  // If user uploaded a reference image, analyze it with Vision AI and inject context into the prompt
-  let imageContextBlock = '';
-  if (uploadedFiles && uploadedFiles.length > 0) {
-    const firstImageFile = uploadedFiles.find(f => f.mimetype && f.mimetype.startsWith('image/'));
-    if (firstImageFile) {
-      try {
-        console.log(`[ManualGen] Reference image detected. Analyzing with Vision AI...`);
-        const visionData = await analyzeImageWithAI(firstImageFile.url, workspaceId, 'wizard-gen');
-        imageContextBlock = `
-    REFERENCE IMAGE ANALYSIS (User uploaded this image — the post MUST be based on it):
-    - Scene: ${visionData.scene || 'Not detected'}
-    - Detected Objects: ${(visionData.objects || []).join(', ') || 'N/A'}
-    - Mood/Emotion: ${visionData.mood || 'N/A'}
-    - Dominant Colors: ${(visionData.colors || []).join(', ') || 'N/A'}
-    - Environment: ${visionData.environment || 'N/A'}
-    - Composition: ${visionData.composition || 'N/A'}
-    - Detected Brand/Text in Image: ${visionData.detectedText || visionData.brandName || 'None'}
-    - Suggested Social Category: ${visionData.socialCategory || 'General'}
-    
-    IMPORTANT: Use the above image context to write a post that describes or promotes what is shown in the image. The hook, captions, and CTA should directly reference the visual content of the image.`;
-        console.log(`[ManualGen] Vision AI analysis successful. Injecting image context into prompt.`);
-      } catch (visionErr) {
-        console.warn(`[ManualGen] Vision AI analysis failed (non-critical): ${visionErr.message}. Proceeding without image context.`);
-      }
-    }
-  }
-
   const systemPrompt = `
     You are an expert Social Media Copywriter, growth marketer, and AI prompt engineer.
-    Create a highly engaging, custom social media post for ${platform} based on the user's manual selections.
+    Create a highly engaging, custom social media post for ${singlePlatform} based on the user's manual selections.
     
     BRAND CONTEXT:
     ${brandContext}
@@ -1378,7 +1347,7 @@ export const generateManualPost = async (workspaceId, payload) => {
   }
 
   // Map platform to lowercase for the enum
-  const normPlatform = (platform || 'instagram').toLowerCase().replace(' (x)', '').replace(' community', '');
+  const normPlatform = (singlePlatform || 'instagram').toLowerCase().replace(' (x)', '').replace(' community', '');
 
   const post = await GeneratedPost.create({
     workspaceId,
@@ -1407,7 +1376,7 @@ export const generateManualPost = async (workspaceId, payload) => {
       const isLogo = firstFile.filename?.toLowerCase().includes('logo') || 
                      description.toLowerCase().includes('logo');
                      
-      const promptText = copyOutput.imagePrompt || `A professional high-quality social media ad for ${platform}. ${description}`;
+      const promptText = copyOutput.imagePrompt || `A professional high-quality social media ad for ${singlePlatform}. ${description}`;
       
       if (isLogo) {
         logoUrl = firstFile.url;
@@ -1434,7 +1403,7 @@ export const generateManualPost = async (workspaceId, payload) => {
         }
       }
     } else {
-      const promptText = copyOutput.imagePrompt || `A professional high-quality social media ad for ${platform}. ${description}`;
+      const promptText = copyOutput.imagePrompt || `A professional high-quality social media ad for ${singlePlatform}. ${description}`;
       try {
         console.log(`[ManualGen] Generating AI background...`);
         baseImageUrl = await generateImageFromPrompt(promptText, null, '1:1', 'gemini-3.1-flash-image-preview');
@@ -1443,8 +1412,7 @@ export const generateManualPost = async (workspaceId, payload) => {
       }
     }
 
-    // Use the base image directly — skip the secondary overlay step
-    // (overlay adds another 60-120s AI call that causes connection timeouts)
+    // Use the base image directly
     finalImageUrl = baseImageUrl || logoUrl || "https://storage.googleapis.com/social_media_agent_assets/mock/ai_post.png";
 
     const asset = await GeneratedAsset.create({
@@ -1465,5 +1433,52 @@ export const generateManualPost = async (workspaceId, payload) => {
 
   return post;
 };
+
+export const generateManualPost = async (workspaceId, payload) => {
+  const { platform, uploadedFiles } = payload;
+  const brand = await BrandProfile.findOne({ workspaceId });
+
+  const platformsList = typeof platform === 'string'
+    ? platform.split(',').map(p => p.trim()).filter(Boolean)
+    : [platform];
+
+  // --- IMAGE CONTEXT ENRICHMENT (Run once globally for all selected platforms) ---
+  let imageContextBlock = '';
+  if (uploadedFiles && uploadedFiles.length > 0) {
+    const firstImageFile = uploadedFiles.find(f => f.mimetype && f.mimetype.startsWith('image/'));
+    if (firstImageFile) {
+      try {
+        console.log(`[ManualGen] Reference image detected. Analyzing with Vision AI...`);
+        const visionData = await analyzeImageWithAI(firstImageFile.url, workspaceId, 'wizard-gen');
+        imageContextBlock = `
+    REFERENCE IMAGE ANALYSIS (User uploaded this image — the post MUST be based on it):
+    - Scene: ${visionData.scene || 'Not detected'}
+    - Detected Objects: ${(visionData.objects || []).join(', ') || 'N/A'}
+    - Mood/Emotion: ${visionData.mood || 'N/A'}
+    - Dominant Colors: ${(visionData.colors || []).join(', ') || 'N/A'}
+    - Environment: ${visionData.environment || 'N/A'}
+    - Composition: ${visionData.composition || 'N/A'}
+    - Detected Brand/Text in Image: ${visionData.detectedText || visionData.brandName || 'None'}
+    - Suggested Social Category: ${visionData.socialCategory || 'General'}
+    
+    IMPORTANT: Use the above image context to write a post that describes or promotes what is shown in the image. The hook, captions, and CTA should directly reference the visual content of the image.`;
+        console.log(`[ManualGen] Vision AI analysis successful. Injecting image context into prompt.`);
+      } catch (visionErr) {
+        console.warn(`[ManualGen] Vision AI analysis failed (non-critical): ${visionErr.message}. Proceeding without image context.`);
+      }
+    }
+  }
+
+  if (platformsList.length === 1) {
+    return await generateSinglePlatformPost(workspaceId, platformsList[0], payload, brand, imageContextBlock);
+  }
+
+  // Generate for all platforms in parallel
+  const posts = await Promise.all(
+    platformsList.map(p => generateSinglePlatformPost(workspaceId, p, payload, brand, imageContextBlock))
+  );
+
+  return posts;
+};;
 
 // const mockMediaGeneration = async () => "https://storage.googleapis.com/social_media_agent_assets/mock/ai_post.png"; // Removed for isolation
